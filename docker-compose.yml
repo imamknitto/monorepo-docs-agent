@@ -1,0 +1,48 @@
+services:
+  # Public ingress. Only api and web publish ports.
+  api:
+    build:
+      context: .
+      dockerfile: ./apps/api/Dockerfile
+    image: docs-agent-api:0.1.0
+    ports:
+      - "8000:8000"
+    environment:
+      PORT: "8000"
+      CONVERTER_URL: http://converter:8100
+      CONVERTER_API_KEY: ${CONVERTER_API_KEY:-}
+      PLATFORM_URL: ${PLATFORM_URL:-http://127.0.0.1:5173}
+    depends_on:
+      - converter
+    restart: unless-stopped
+
+  # Local-integration copy of the standalone Python service.
+  # Deployment uses the published image / remote URL instead
+  # (set CONVERTER_URL accordingly and drop this service).
+  converter:
+    build:
+      context: ../md-conversion-service-py
+    image: md-conversion-service-py:0.1.0
+    env_file:
+      - path: ../md-conversion-service-py/.env
+        required: false
+    environment:
+      PUBLIC_DIR: /data/public
+      CONVERTER_API_KEY: ${CONVERTER_API_KEY:-}
+    volumes:
+      - markitdown-public:/data/public
+    restart: unless-stopped
+
+  web:
+    build:
+      context: .
+      dockerfile: ./apps/platform/Dockerfile
+    image: docs-agent-platform:0.1.0
+    ports:
+      - "3000:80"
+    depends_on:
+      - api
+    restart: unless-stopped
+
+volumes:
+  markitdown-public:

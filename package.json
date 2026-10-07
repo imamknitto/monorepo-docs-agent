@@ -1,0 +1,17 @@
+{
+  "name": "monorepo-docs-agent",
+  "version": "0.1.0",
+  "private": true,
+  "packageManager": "pnpm@9.15.9",
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "dev:platform": "pnpm --filter @markitdown/platform dev",
+    "build:platform": "pnpm --filter @markitdown/platform build",
+    "dev:api": "pnpm --filter @markitdown/api dev",
+    "build:api": "pnpm --filter @markitdown/api build",
+    "build": "pnpm -r build",
+    "typecheck": "pnpm -r --filter './apps/*' --filter './packages/*' exec tsc --noEmit"
+  }
+}
