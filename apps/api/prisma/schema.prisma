@@ -1,0 +1,78 @@
+generator client {
+  provider = "prisma-client"
+  output   = "../src/generated/prisma"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+// RAG documents indexed from md-conversion-service-py markdown.
+// id reuses the converter doc_id (32 hex chars) so the gateway can
+// correlate converter artifacts, DB rows and Qdrant points.
+model Document {
+  id          String         @id
+  name        String
+  markdownUrl String?
+  stats       Json?
+  summary     String?
+  isProcessed Boolean        @default(false)
+  createdAt   DateTime       @default(now())
+  pages       DocumentPage[]
+}
+
+model DocumentPage {
+  id         String   @id @default(cuid())
+  pageNumber Int
+  content    String
+  metadata   Json
+  documentId String
+  document   Document @relation(fields: [documentId], references: [id], onDelete: Cascade)
+
+  @@unique([documentId, pageNumber])
+  @@index([documentId])
+}
+
+// Anvia memory-prisma (v1, Prisma 7 conventional client).
+// sessionId = doc:<docId>:s:<uuid>, userId = fp:<browser fingerprint>.
+model AgentMemorySession {
+  id        String   @id @default(cuid())
+  scopeKey  String   @unique
+  sessionId String
+  userId    String?
+  metadata  Json
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  messages AgentMemoryMessage[]
+  errors   AgentMemoryError[]
+
+  @@index([sessionId, userId])
+}
+
+model AgentMemoryMessage {
+  id              String             @id @default(cuid())
+  memorySessionId String
+  memorySession   AgentMemorySession @relation(fields: [memorySessionId], references: [id], onDelete: Cascade)
+  runId           String
+  turn            Int
+  position        Int
+  role            String
+  message         Json
+  createdAt       DateTime           @default(now())
+
+  @@unique([memorySessionId, position])
+  @@index([runId])
+}
+
+model AgentMemoryError {
+  id              String             @id @default(cuid())
+  memorySessionId String
+  memorySession   AgentMemorySession @relation(fields: [memorySessionId], references: [id], onDelete: Cascade)
+  runId           String
+  error           Json
+  messages        Json
+  createdAt       DateTime           @default(now())
+
+  @@index([runId])
+}

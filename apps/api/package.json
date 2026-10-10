@@ -1,22 +1,42 @@
 {
-  "name": "@markitdown/api",
+  "name": "@halodocs/api",
   "version": "0.1.0",
   "private": true,
   "type": "module",
   "scripts": {
-    "dev": "tsx watch src/index.ts",
+    "with-env": "dotenv -e ../../.env --",
+    "dev": "pnpm with-env tsx watch src/index.ts",
+    "worker": "pnpm with-env tsx watch src/worker.ts",
+    "runner:dev": "pnpm with-env tsx src/runner-dev.ts",
     "build": "tsc",
-    "start": "node dist/index.js"
+    "start": "node dist/index.js",
+    "start:worker": "node dist/worker.js",
+    "db:generate": "pnpm with-env prisma generate",
+    "db:migrate": "pnpm with-env prisma migrate dev",
+    "db:deploy": "pnpm with-env prisma migrate deploy",
+    "db:studio": "pnpm with-env prisma studio"
   },
   "dependencies": {
+    "@anvia/core": "1.8.0",
+    "@anvia/memory-prisma": "1.2.2",
+    "@anvia/openai": "1.2.0",
+    "@anvia/qdrant": "1.1.4",
+    "@anvia/transformers": "1.1.5",
+    "@halodocs/agent": "workspace:*",
     "@hono/node-server": "^1.13.7",
-    "@markitdown/agent": "workspace:*",
+    "@prisma/adapter-pg": "^7.10.0",
+    "@prisma/client": "^7.10.0",
+    "bullmq": "^5.81.2",
     "dotenv": "^16.4.5",
-    "hono": "^4.6.0"
+    "hono": "^4.6.0",
+    "ioredis": "^5.11.1",
+    "undici": "7",
+    "zod": "4.6.5"
   },
   "devDependencies": {
     "@types/node": "^22.7.0",
+    "prisma": "^7.10.0",
     "tsx": "^4.19.1",
-    "typescript": "~5.6.3"
+    "typescript": "^5.9.3"
   }
 }

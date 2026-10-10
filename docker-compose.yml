@@ -1,48 +1,34 @@
+# Infrastructure only. Apps run locally via pnpm (pnpm dev:api / dev:worker /
+# dev:platform) and the converter runs from the sibling repo
+# md-conversion-service-py. Only stateful backing services live here.
 services:
-  # Public ingress. Only api and web publish ports.
-  api:
-    build:
-      context: .
-      dockerfile: ./apps/api/Dockerfile
-    image: docs-agent-api:0.1.0
+  db:
+    image: postgres:16
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: postgres
     ports:
-      - "8000:8000"
-    environment:
-      PORT: "8000"
-      CONVERTER_URL: http://converter:8100
-      CONVERTER_API_KEY: ${CONVERTER_API_KEY:-}
-      PLATFORM_URL: ${PLATFORM_URL:-http://127.0.0.1:5173}
-    depends_on:
-      - converter
-    restart: unless-stopped
-
-  # Local-integration copy of the standalone Python service.
-  # Deployment uses the published image / remote URL instead
-  # (set CONVERTER_URL accordingly and drop this service).
-  converter:
-    build:
-      context: ../md-conversion-service-py
-    image: md-conversion-service-py:0.1.0
-    env_file:
-      - path: ../md-conversion-service-py/.env
-        required: false
-    environment:
-      PUBLIC_DIR: /data/public
-      CONVERTER_API_KEY: ${CONVERTER_API_KEY:-}
+      - "15433:5432"
     volumes:
-      - markitdown-public:/data/public
+      - docs-agent-pgdata:/var/lib/postgresql/data
     restart: unless-stopped
 
-  web:
-    build:
-      context: .
-      dockerfile: ./apps/platform/Dockerfile
-    image: docs-agent-platform:0.1.0
+  redis:
+    image: redis:7.2.4
+    restart: always
     ports:
-      - "3000:80"
-    depends_on:
-      - api
+      - "16379:6379"
+
+  qdrant:
+    image: qdrant/qdrant:v1.18.3
     restart: unless-stopped
+    ports:
+      - "127.0.0.1:6333:6333"
+      - "127.0.0.1:6334:6334"
+    volumes:
+      - docs-agent-qdrant:/qdrant/storage
 
 volumes:
-  markitdown-public:
+  docs-agent-pgdata:
+  docs-agent-qdrant:

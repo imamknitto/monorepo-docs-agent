@@ -9,7 +9,7 @@ COPY services/ai-agent/package.json services/ai-agent/package.json
 RUN corepack prepare pnpm@9.15.9 --activate && pnpm install --ignore-scripts
 COPY apps/platform apps/platform
 COPY packages/shared packages/shared
-RUN pnpm --filter @markitdown/platform build
+RUN pnpm --filter @halodocs/platform build
 
 FROM nginx:alpine
 COPY --from=build /repo/apps/platform/dist /usr/share/nginx/html

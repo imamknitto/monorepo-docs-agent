@@ -7,11 +7,21 @@
     "node": ">=20"
   },
   "scripts": {
-    "dev:platform": "pnpm --filter @markitdown/platform dev",
-    "build:platform": "pnpm --filter @markitdown/platform build",
-    "dev:api": "pnpm --filter @markitdown/api dev",
-    "build:api": "pnpm --filter @markitdown/api build",
+    "dev:platform": "pnpm --filter @halodocs/platform dev",
+    "build:platform": "pnpm --filter @halodocs/platform build",
+    "dev:api": "pnpm --filter @halodocs/api dev",
+    "dev": "pnpm --parallel --filter @halodocs/api --filter @halodocs/platform run dev",
+    "dev:all": "concurrently -n api,worker,web \"pnpm dev:api\" \"pnpm dev:worker\" \"pnpm dev:platform\"",
+    "build:api": "pnpm --filter @halodocs/api build",
+    "dev:worker": "pnpm --filter @halodocs/api worker",
+    "db:generate": "pnpm --filter @halodocs/api db:generate",
+    "db:migrate": "pnpm --filter @halodocs/api db:migrate",
+    "db:studio": "pnpm --filter @halodocs/api db:studio",
     "build": "pnpm -r build",
-    "typecheck": "pnpm -r --filter './apps/*' --filter './packages/*' exec tsc --noEmit"
+    "typecheck": "pnpm -r exec tsc --noEmit"
+  },
+  "devDependencies": {
+    "concurrently": "^9.1.2",
+    "dotenv-cli": "^11.0.0"
   }
 }

@@ -5,11 +5,10 @@ WORKDIR /repo
 COPY package.json pnpm-workspace.yaml pnpm-lock.yaml* .npmrc ./
 COPY apps/api/package.json apps/api/
 COPY packages/agent/package.json packages/agent/
-COPY packages/shared/package.json packages/shared/
-RUN corepack prepare pnpm@9.15.9 --activate && pnpm install --ignore-scripts --filter @markitdown/api...
+RUN corepack prepare pnpm@9.15.9 --activate && pnpm install --ignore-scripts --filter @halodocs/api...
 COPY apps/api apps/api
 COPY packages/agent packages/agent
-RUN pnpm --filter @markitdown/api build && pnpm --filter @markitdown/api deploy --prod /srv
+RUN pnpm --filter @halodocs/api exec prisma generate && pnpm --filter @halodocs/api build && pnpm --filter @halodocs/api deploy --prod /srv
 
 FROM node:20-slim
 ENV NODE_ENV=production
