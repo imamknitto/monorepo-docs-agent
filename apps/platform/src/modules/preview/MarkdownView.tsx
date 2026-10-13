@@ -2,8 +2,8 @@ import { isValidElement, useState, type ReactNode } from 'react'
 import ReactMarkdown, { type Components } from 'react-markdown'
 import rehypeSanitize, { defaultSchema } from 'rehype-sanitize'
 import remarkGfm from 'remark-gfm'
-import { absoluteUrl } from '../lib/api'
-import { useI18n } from '../lib/i18n'
+import { absoluteUrl } from '../../lib/api'
+import { useI18n } from '../../lib/i18n'
 
 // Keep `language-*` classes from fenced blocks so the block header
 // can show the language; everything else stays strictly sanitized.

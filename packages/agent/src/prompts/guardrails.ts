@@ -52,12 +52,23 @@ const leakageGuard = defineOutputGuardrail({
 })
 
 /**
- * Deterministic safety net around the doc-QA agent. Runs in "enforce" mode:
- * blocked input/outputs are replaced by the refusal message above.
+ * Deterministic safety net around the doc-QA agent.
+ *
+ * Two separate policies on purpose: the agent buffers all output deltas when
+ * any policy has an enforced output guardrail (`hasEnforcedOutputGuardrails`),
+ * which kills real streaming. So the input guard stays `enforce` (blocking),
+ * while the output guard runs in `observe` mode — it records leakage decisions
+ * without forcing the stream to be buffered.
  */
-export const docGuardrails = defineGuardrailPolicy({
-  id: 'doc-qa-safety',
-  mode: 'enforce',
-  input: [injectionGuard],
-  output: [leakageGuard],
-})
+export const docGuardrails = [
+  defineGuardrailPolicy({
+    id: 'doc-qa-input-safety',
+    mode: 'enforce',
+    input: [injectionGuard],
+  }),
+  defineGuardrailPolicy({
+    id: 'doc-qa-output-safety',
+    mode: 'observe',
+    output: [leakageGuard],
+  }),
+]

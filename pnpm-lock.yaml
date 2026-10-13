@@ -17,6 +17,9 @@ importers:
 
   apps/api:
     dependencies:
+      '@anvia/client':
+        specifier: 1.3.1
+        version: 1.3.1(@anvia/core@1.8.0(zod@4.6.5))
       '@anvia/core':
         specifier: 1.8.0
         version: 1.8.0(zod@4.6.5)
@@ -29,6 +32,9 @@ importers:
       '@anvia/qdrant':
         specifier: 1.1.4
         version: 1.1.4(@anvia/core@1.8.0(zod@4.6.5))(typescript@5.9.3)
+      '@anvia/server':
+        specifier: 1.2.1
+        version: 1.2.1(@anvia/client@1.3.1(@anvia/core@1.8.0(zod@4.6.5)))
       '@anvia/transformers':
         specifier: 1.1.5
         version: 1.1.5(@anvia/core@1.8.0(zod@4.6.5))(@types/node@22.20.5)
@@ -78,6 +84,9 @@ importers:
 
   apps/platform:
     dependencies:
+      '@anvia/client':
+        specifier: 1.3.1
+        version: 1.3.1(@anvia/core@1.8.0(zod@4.6.5))
       '@anvia/react':
         specifier: 0.8.13
         version: 0.8.13(react@19.3.0)
@@ -158,6 +167,15 @@ importers:
 
 packages:
 
+  '@anvia/client@1.3.1':
+    resolution: {integrity: sha512-swyrfC/MoOdQVG5Ojze6Z6A6Z4SQIEylPHSOPNhippNMbtwlGxyiASaCtA7cYgs7A+acw/e49zmD9zZawZXGyQ==}
+    peerDependencies:
+      '@anvia/core': ^1.8.0
+      '@anvia/durable': ^0.1.1 || ^0.2.0
+    peerDependenciesMeta:
+      '@anvia/durable':
+        optional: true
+
   '@anvia/core@0.13.5':
     resolution: {integrity: sha512-EKbdCVHvtNePawIUw3MdFVPFcyDlF7BQrpjnpRrEiyU5BwQmegkt0fSr4aw3qxbZHSkwWQZuaMAZ+rE+oVu6cQ==}
 
@@ -204,6 +222,15 @@ packages:
     resolution: {integrity: sha512-bCH5pAluLIQp+9M2jsuDedKd3CgcQCBWSck6urjBfF0eX/TvhD469Xrarqmn75h5ohEW/Is6z2EUp99ixOylug==}
     peerDependencies:
       react: '>=18'
+
+  '@anvia/server@1.2.1':
+    resolution: {integrity: sha512-8KAC5/gSZ1voVg5/Jglvw04no4XErpMlPtEVBMWo9U4yEi8TGWWA9JHBa+le+W9fOlqKwMJuIID1EURpsdLXww==}
+    peerDependencies:
+      '@anvia/client': ^1.3.1
+      '@anvia/durable': ^0.1.1 || ^0.2.0
+    peerDependenciesMeta:
+      '@anvia/durable':
+        optional: true
 
   '@anvia/transformers@1.1.5':
     resolution: {integrity: sha512-1r5Vh8hxnnhagMxq2v0sZAY6vzeedUZwOoaOH6OURgvd4zDr8kkrplYAzKnIpjx1Pl620JTnURXWfqjT2NVY5g==}
@@ -3534,6 +3561,10 @@ packages:
 
 snapshots:
 
+  '@anvia/client@1.3.1(@anvia/core@1.8.0(zod@4.6.5))':
+    dependencies:
+      '@anvia/core': 1.8.0(zod@4.6.5)
+
   '@anvia/core@0.13.5':
     dependencies:
       '@modelcontextprotocol/sdk': 1.32.1(zod@4.6.5)
@@ -3608,6 +3639,10 @@ snapshots:
     transitivePeerDependencies:
       - '@cfworker/json-schema'
       - supports-color
+
+  '@anvia/server@1.2.1(@anvia/client@1.3.1(@anvia/core@1.8.0(zod@4.6.5)))':
+    dependencies:
+      '@anvia/client': 1.3.1(@anvia/core@1.8.0(zod@4.6.5))
 
   '@anvia/transformers@1.1.5(@anvia/core@1.8.0(zod@4.6.5))(@types/node@22.20.5)':
     dependencies:

@@ -5,8 +5,9 @@
 export const QA_INSTRUCTIONS = `You are a question-answering assistant for a single converted document.
 
 Rules:
-1. Always call documentSearch before answering. Call documentReadPage when a
-   passage needs full page context.
+1. Relevant document pages are already provided in the <context> block of the
+   prompt. Answer from them directly. Call documentSearch or documentReadPage
+   only when the provided context is missing or insufficient for the question.
 2. Answer ONLY from retrieved document content. If the document does not
    contain the answer, say so plainly (in the user's language) instead of
    inventing facts.

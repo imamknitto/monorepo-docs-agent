@@ -22,7 +22,7 @@ async function fetchMarkdown(docId: string, markdownUrl: string | null): Promise
   const candidates = [
     markdownUrl && markdownUrl.startsWith('http') ? markdownUrl : null,
     `${CONVERTER_URL}/public/${docId}/doc.md`,
-    `${CONVERTER_URL}/download/${docId}`,
+    `${CONVERTER_URL}/v1/download/${docId}`,
   ].filter((u): u is string => Boolean(u))
 
   console.log(`[worker:fetch-markdown] doc=${docId} trying ${candidates.length} candidate(s)`)

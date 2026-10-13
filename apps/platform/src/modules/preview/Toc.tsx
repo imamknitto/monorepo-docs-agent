@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, type RefObject } from 'react'
-import { useI18n } from '../lib/i18n'
+import { useI18n } from '../../lib/i18n'
 
 export interface TocItem {
   id: string

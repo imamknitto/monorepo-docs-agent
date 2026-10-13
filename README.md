@@ -8,8 +8,9 @@ never imported, only called over HTTP.
 ```
 apps/platform/   Vite + React + TS + TanStack Router + Tailwind
                   Upload PDF → render markdown (/ + /r/$docId) + RAG chat panel.
-                  Files > 8 MB (or sync timeouts) convert via background jobs
-                  with progress; OCR on large files shows a cost warning.
+                  Every conversion runs as a background job (progress + cancel);
+                  the job id is persisted to localStorage so a reload resumes
+                  polling. OCR on large files shows a cost warning.
 apps/api/        Hono gateway, public :8377
                   POST /convert (proxy + enqueue index; HTTP 504 past
                     CONVERT_TIMEOUT_MS, with code convert_timeout),

@@ -1,4 +1,5 @@
 import type { AnyTool } from '@anvia/core'
+import type { ClientStreamError } from '@anvia/client'
 import { OpenAIClient } from '@anvia/openai'
 import { PrismaMemoryStore } from '@anvia/memory-prisma'
 import type { Message } from '@anvia/core'
@@ -332,6 +333,29 @@ function toolOutputText(output: unknown): { text: string; isError: boolean } {
   }
   return { text: shortJson(output), isError: false }
 }
+/** Latest user turn from a client-protocol message list (drives retrieval + prompting). */
+export function lastUserText(messages: readonly Message[]): string {
+  for (let i = messages.length - 1; i >= 0; i--) {
+    const message = messages[i]
+    if (!message || message.role !== 'user') continue
+    const text = messageText(message).trim()
+    if (text) return text
+  }
+  return ''
+}
+
+/** Map any failure into a browser-safe client error (keeps the upstream-key hint). */
+export function toClientError(error: unknown): ClientStreamError {
+  return { message: withUpstreamHint(error instanceof Error ? error.message : 'run failed') }
+}
+
+/** Shared RAG setup: retrieved pages + prompt + agent. Streaming and ask share it. */
+export async function prepareAnswer(docId: string, question: string, summary: string | null) {
+  const pages = await retrievePages(docId, question)
+  const agent = await buildAgent(docId, summary)
+  return { pages, prompt: buildAnswerPrompt(question, pages), agent }
+}
+
 /** Stream one answer over the doc's retrieved pages, persisting via memory. */
 export async function* streamAnswer(
   docId: string,
@@ -340,11 +364,9 @@ export async function* streamAnswer(
   question: string,
   summary: string | null,
 ): AsyncGenerator<ChatStreamEvent> {
-  const pages = await retrievePages(docId, question)
+  const { pages, prompt, agent } = await prepareAnswer(docId, question, summary)
   yield { type: 'citations', citations: toCitations(pages) }
 
-  const agent = await buildAgent(docId, summary)
-  const prompt = buildAnswerPrompt(question, pages)
   const stream = agent.stream({
     prompt,
     session: { sessionId, userId, metadata: { docId } },
