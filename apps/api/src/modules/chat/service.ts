@@ -6,6 +6,7 @@ import type { Message } from '@anvia/core'
 import {
   CHAT_MODEL,
   CHAT_HISTORY_TURNS,
+  CHAT_MAX_TURNS,
   OPENAI_API_KEY,
   OPENAI_BASE_URL,
   hasChatModel,
@@ -298,6 +299,7 @@ async function buildAgent(docId: string, summary: string | null) {
     model,
     summary,
     tools,
+    maxTurns: CHAT_MAX_TURNS,
     memory: new LeanHistoryStore(getMemoryStore(), CHAT_HISTORY_TURNS),
   })
 }

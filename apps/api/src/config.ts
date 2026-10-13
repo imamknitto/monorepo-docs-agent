@@ -55,6 +55,8 @@ export const OPENAI_BASE_URL = process.env.OPENAI_BASE_URL ?? ''
 export const CHAT_MODEL = env('CHAT_MODEL', 'gpt-4o-mini')
 /** User-led turns replayed to the model per request (summary anchors older context). */
 export const CHAT_HISTORY_TURNS = Number(env('CHAT_HISTORY_TURNS', '6'))
+/** Max agent turns (model/tool loop) per chat request before MaxTurnsError. */
+export const CHAT_MAX_TURNS = Number(env('CHAT_MAX_TURNS', '5'))
 export const SUMMARY_MODEL = env('SUMMARY_MODEL', process.env.CHAT_MODEL ?? 'gpt-4o-mini')
 export const EMBEDDING_MODEL = env('EMBEDDING_MODEL', 'Xenova/all-MiniLM-L6-v2')
 export const EMBEDDING_DIMS = Number(env('EMBEDDING_DIMS', '384'))

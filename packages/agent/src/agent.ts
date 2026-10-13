@@ -16,7 +16,10 @@ export interface CreateDocAgentOptions {
   tools?: AnyTool[]
   additionalInstructions?: string[]
   memory?: MemoryStore
+  maxTurns?: number
 }
+
+const DEFAULT_MAX_TURNS = 5
 
 /**
  * Doc-QA agent factory (cermin createAgent referensi, API v1):
@@ -35,7 +38,7 @@ export function createDocAgent(opts: CreateDocAgentOptions) {
     id: `doc-${opts.docId}`,
     model: opts.model ?? defaultModel(),
     instructions,
-    maxTurns: 3,
+    maxTurns: opts.maxTurns ?? DEFAULT_MAX_TURNS,
     tools: opts.tools ?? [],
     guardrails: docGuardrails,
     ...(opts.memory ? { memory: { store: opts.memory } } : {}),
