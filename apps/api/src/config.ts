@@ -1,3 +1,8 @@
+import path from 'node:path'
+import { fileURLToPath } from 'node:url'
+
+const apiRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
+
 export function env(name: string, fallback: string): string {
   const v = process.env[name]
   return v === undefined || v === '' ? fallback : v
@@ -12,6 +17,13 @@ export const CONVERTER_API_KEY = process.env.CONVERTER_API_KEY ?? ''
 
 export const MAX_UPLOAD_MB = Number(env('MAX_UPLOAD_MB', '30'))
 export const MAX_UPLOAD_BYTES = MAX_UPLOAD_MB * 1024 * 1024
+
+/** Runtime conversion output. Served at /public; later swappable for object storage. */
+export const ARTIFACT_DIR = path.resolve(
+  env('ARTIFACT_DIR', path.join(apiRoot, 'data', 'public')),
+)
+export const ARTIFACT_MAX_MB = Number(env('ARTIFACT_MAX_MB', '1024'))
+export const ARTIFACT_MAX_BYTES = ARTIFACT_MAX_MB * 1024 * 1024
 
 /**
  * Upper bound for a proxied conversion request (gateway → converter).

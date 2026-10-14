@@ -4,6 +4,13 @@ import { MAX_UPLOAD_BYTES, MAX_UPLOAD_MB, DOC_ID_RE } from "../../config.js";
 import { converterClient } from "./client.js";
 import { getDocumentQueue } from "../../config/queue.js";
 import { upsertPendingDoc } from "../../modules/documents/store.js";
+import {
+  ArtifactDiskFullError,
+  artifactExists,
+  putArtifact,
+  stripImageBytes,
+  type ArtifactPayload,
+} from "../documents/artifacts.js";
 
 function passThrough(res: Response): Response {
   const headers = new Headers();
@@ -169,33 +176,42 @@ converterRoutes.post("/convert", async (c) => {
     return c.json({ detail: "Conversion failed upstream." }, 502);
   }
 
-  // Best-effort: record + enqueue indexing without blocking the response.
-  if (res.ok) {
-    const cloned = res.clone();
+  if (!res.ok) return passThrough(res);
+
+  let payload: ArtifactPayload;
+  try {
+    payload = (await res.json()) as ArtifactPayload;
+  } catch {
+    return c.json({ detail: "Conversion response was not JSON." }, 502);
+  }
+  if (payload.doc_id) {
     try {
-      const meta = (await cloned.json()) as {
-        doc_id?: string;
-        markdown_url?: string | null;
-        stats?: unknown;
-      };
-      if (meta.doc_id) {
-        await enqueueIndexing(
-          meta.doc_id,
-          file.name,
-          meta.markdown_url ?? null,
-          meta.stats,
-          requestIdHeader,
+      if (!(await artifactExists(payload.doc_id))) {
+        await putArtifact({ ...payload, filename: file.name });
+      }
+      await enqueueIndexing(
+        payload.doc_id,
+        file.name,
+        payload.markdown_url ?? null,
+        payload.stats,
+        requestIdHeader,
+      );
+    } catch (err) {
+      if (err instanceof ArtifactDiskFullError) {
+        return c.json(
+          { detail: "Artifact storage is full, try again later." },
+          507,
         );
       }
-    } catch (err) {
-      console.warn(
-        `[index:enqueue] skipped req=${requestIdHeader ?? "-"} err=${err instanceof Error ? err.message : String(err)}`,
+      console.error(
+        `[convert] store failed req=${requestIdHeader ?? "-"} err=${err instanceof Error ? err.message : String(err)}`,
         err instanceof Error ? err.stack : "",
       );
+      return c.json({ detail: "Failed to store conversion result." }, 502);
     }
   }
 
-  return passThrough(res);
+  return c.json(stripImageBytes(payload));
 });
 
 /** Async conversion: returns 202 immediately, client polls GET /v1/convert/jobs/:jobId */
@@ -289,39 +305,49 @@ converterRoutes.get("/convert/jobs/:jobId", async (c) => {
   if (!res.ok)
     return c.json({ detail: "Conversion service unavailable." }, 502);
 
-  // Async jobs are only recorded when they finish. Enqueue indexing on the
-  // first poll that reports done (idempotent via getDocStatus in
-  // enqueueIndexing) — the sync path does this inline after /convert.
   const requestIdHeader = c.get("requestId") as string | undefined;
-  const cloned = res.clone();
+  let job: {
+    status?: string;
+    doc_id?: string;
+    filename?: string | null;
+    result?: ArtifactPayload | null;
+  };
   try {
-    const job = (await cloned.json()) as {
-      status?: string;
-      doc_id?: string;
-      filename?: string | null;
-      result?: {
-        doc_id?: string;
-        markdown_url?: string | null;
-        stats?: unknown;
-      } | null;
-    };
-    if (job.status === "done" && job.doc_id) {
+    job = (await res.json()) as typeof job;
+  } catch {
+    return c.json({ detail: "Conversion response was not JSON." }, 502);
+  }
+  if (job.status === "done" && job.result?.doc_id) {
+    try {
+      if (!(await artifactExists(job.result.doc_id))) {
+        await putArtifact({
+          ...job.result,
+          filename: job.filename ?? job.result.doc_id,
+        });
+      }
       await enqueueIndexing(
-        job.doc_id,
-        job.filename ?? job.doc_id,
-        job.result?.markdown_url ?? null,
-        job.result?.stats,
+        job.result.doc_id,
+        job.filename ?? job.result.doc_id,
+        job.result.markdown_url ?? null,
+        job.result.stats,
         requestIdHeader,
       );
+    } catch (err) {
+      if (err instanceof ArtifactDiskFullError) {
+        return c.json(
+          { detail: "Artifact storage is full, try again later." },
+          507,
+        );
+      }
+      console.error(
+        `[convert:async] store failed req=${requestIdHeader ?? "-"} err=${err instanceof Error ? err.message : String(err)}`,
+        err instanceof Error ? err.stack : "",
+      );
+      return c.json({ detail: "Failed to store conversion result." }, 502);
     }
-  } catch (err) {
-    console.warn(
-      `[index:enqueue] async poll skipped req=${requestIdHeader ?? "-"} err=${err instanceof Error ? err.message : String(err)}`,
-      err instanceof Error ? err.stack : "",
-    );
   }
 
-  return passThrough(res);
+  return c.json(stripImageBytes(job));
 });
 
 /** Cancel async job (queued or processing) */

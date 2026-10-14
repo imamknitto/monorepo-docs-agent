@@ -5,6 +5,7 @@ import { Message, useMessage, useMessagePart } from '@anvia/react-ui'
 import type { UIMessage } from '@anvia/react'
 import { useI18n } from '../../lib/i18n'
 import { CheckIcon, CopyIcon, WrenchIcon } from '../../components/icons'
+import { chatMarkdownComponents } from './markdown'
 import { jsonText } from './protocol'
 
 /** One tool call, rendered inline inside its assistant message. */
@@ -89,7 +90,10 @@ export function MessagePart({
       if (part.id !== firstTextId) return null
       return (
         <div className="chat-md">
-          <ReactMarkdown remarkPlugins={[remarkGfm]}>
+          <ReactMarkdown
+            remarkPlugins={[remarkGfm]}
+            components={chatMarkdownComponents}
+          >
             {smoothedText}
           </ReactMarkdown>
         </div>
@@ -101,7 +105,10 @@ export function MessagePart({
       </span>
     ) : (
       <div className="chat-md">
-        <Message.Markdown />
+        <Message.Markdown
+          remarkPlugins={[remarkGfm]}
+          components={chatMarkdownComponents}
+        />
       </div>
     )
   }

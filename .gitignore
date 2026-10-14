@@ -13,3 +13,6 @@ dist/
 
 # Prisma client is generated (pnpm db:generate / Docker build)
 apps/api/src/generated/
+
+# Conversion artifacts written at runtime (later: object storage)
+apps/api/data/

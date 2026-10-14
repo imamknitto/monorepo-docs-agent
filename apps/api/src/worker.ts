@@ -2,13 +2,12 @@ import { Worker } from 'bullmq'
 import { generateCompletion } from '@anvia/core'
 import { OpenAIClient } from '@anvia/openai'
 import {
-  CONVERTER_URL,
   OPENAI_API_KEY,
   OPENAI_BASE_URL,
   PUBLIC_BASE_URL,
   SUMMARY_MODEL,
-  converterHeaders,
 } from './config.js'
+import { readMarkdown } from './modules/documents/artifacts.js'
 import { QUEUE_NAME, queueConnection } from './config/queue-connection.js'
 import { getPrisma } from './utils/prisma.js'
 import {
@@ -18,34 +17,11 @@ import {
 } from '@halodocs/agent'
 import { indexPages } from './rag/vector.js'
 
-async function fetchMarkdown(docId: string, markdownUrl: string | null): Promise<string> {
-  const candidates = [
-    markdownUrl && markdownUrl.startsWith('http') ? markdownUrl : null,
-    `${CONVERTER_URL}/public/${docId}/doc.md`,
-    `${CONVERTER_URL}/v1/download/${docId}`,
-  ].filter((u): u is string => Boolean(u))
-
-  console.log(`[worker:fetch-markdown] doc=${docId} trying ${candidates.length} candidate(s)`)
-  let lastErr: unknown = null
-  for (const url of candidates) {
-    try {
-      console.log(`[worker:fetch-markdown] doc=${docId} GET ${url}`)
-      const res = await fetch(url, { headers: converterHeaders() })
-      if (res.ok) {
-        const text = await res.text()
-        console.log(`[worker:fetch-markdown] doc=${docId} ok url=${url} bytes=${text.length}`)
-        return text
-      }
-      lastErr = new Error(`HTTP ${res.status} for ${url}`)
-      console.warn(`[worker:fetch-markdown] doc=${docId} fail url=${url} status=${res.status}`)
-    } catch (err) {
-      lastErr = err
-      console.warn(
-        `[worker:fetch-markdown] doc=${docId} error url=${url} err=${err instanceof Error ? err.message : String(err)}`,
-      )
-    }
-  }
-  throw lastErr instanceof Error ? lastErr : new Error('markdown unavailable')
+async function fetchMarkdown(docId: string): Promise<string> {
+  const text = await readMarkdown(docId)
+  if (text === null) throw new Error('markdown unavailable')
+  console.log(`[worker:fetch-markdown] doc=${docId} local bytes=${text.length}`)
+  return text
 }
 
 async function summarize(pages: RetrievedPage[]): Promise<string | null> {
@@ -98,7 +74,7 @@ export const worker = new Worker(
 
     let raw: string
     try {
-      raw = await fetchMarkdown(docId, markdownUrl)
+      raw = await fetchMarkdown(docId)
       log('fetch-markdown', `ok bytes=${raw.length} elapsed=${Date.now() - started}ms`)
     } catch (err) {
       console.error(`[worker:fetch-markdown] doc=${docId} FAILED err=${err instanceof Error ? err.message : String(err)}`, err instanceof Error ? err.stack : '')

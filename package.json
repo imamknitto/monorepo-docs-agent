@@ -9,6 +9,7 @@
   "scripts": {
     "dev:platform": "pnpm --filter @halodocs/platform dev",
     "build:platform": "pnpm --filter @halodocs/platform build",
+    "build:agent": "pnpm --filter @halodocs/agent build",
     "dev:api": "pnpm --filter @halodocs/api dev",
     "dev": "pnpm --parallel --filter @halodocs/api --filter @halodocs/platform run dev",
     "dev:all": "concurrently -n api,worker,web \"pnpm dev:api\" \"pnpm dev:worker\" \"pnpm dev:platform\"",
