@@ -8,6 +8,8 @@ const docId = 'a'.repeat(32);
 const root = await mkdtemp(path.join(os.tmpdir(), 'halodocs-artifacts-'));
 process.env.ARTIFACT_DIR = root;
 process.env.ARTIFACT_MAX_MB = '1';
+process.env.DATABASE_URL ??=
+  'postgresql://postgres:postgres@127.0.0.1:15433/postgres';
 
 const artifacts = await import('../src/modules/documents/artifacts.ts');
 

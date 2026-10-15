@@ -1,4 +1,4 @@
-import { getPrisma } from '../../utils/prisma.js'
+import { prisma } from '../../utils/prisma.js'
 import { deleteDocVectors } from '../../rag/vector.js'
 
 export interface PendingDoc {
@@ -8,10 +8,8 @@ export interface PendingDoc {
   stats: unknown
 }
 
-/** Record converter result so the async worker can index it. Null when no DB. */
-export async function upsertPendingDoc(doc: PendingDoc): Promise<boolean> {
-  const prisma = getPrisma()
-  if (!prisma) return false
+/** Record converter result so the async worker can index it. */
+export async function upsertPendingDoc(doc: PendingDoc): Promise<void> {
   await prisma.document.upsert({
     where: { id: doc.docId },
     update: {
@@ -27,15 +25,12 @@ export async function upsertPendingDoc(doc: PendingDoc): Promise<boolean> {
       isProcessed: false,
     },
   })
-  return true
 }
 
 export async function getDocStatus(docId: string): Promise<
   | { found: false }
   | { found: true; isProcessed: boolean; pages: number; summary: string | null }
 > {
-  const prisma = getPrisma()
-  if (!prisma) return { found: false }
   const doc = await prisma.document.findUnique({
     where: { id: docId },
     select: {
@@ -48,10 +43,8 @@ export async function getDocStatus(docId: string): Promise<
   return { found: true, isProcessed: doc.isProcessed, pages: doc._count.pages, summary: doc.summary }
 }
 
-/** Cascade delete document + pages + vectors + memory sessions. Returns false when no DB. */
-export async function deleteDocCascade(docId: string): Promise<boolean> {
-  const prisma = getPrisma()
-  if (!prisma) return false
+/** Cascade delete document + pages + vectors + memory sessions. */
+export async function deleteDocCascade(docId: string): Promise<void> {
   const pages = await prisma.documentPage.findMany({
     where: { documentId: docId },
     select: { pageNumber: true },
@@ -65,5 +58,4 @@ export async function deleteDocCascade(docId: string): Promise<boolean> {
   await prisma.agentMemorySession.deleteMany({
     where: { sessionId: { startsWith: `doc:${docId}:` } },
   })
-  return true
 }

@@ -20,12 +20,10 @@ import { SendIcon } from '../../components/icons'
 import { Spinner } from '../../components/ui/Spinner'
 import { Alert } from '../../components/ui/Alert'
 import {
-  citationsSchema,
   clientEventToUIEvent,
   describeChatError,
   lastUserText,
   SUGGESTION_KEYS,
-  type ChatClientData,
 } from './protocol'
 import { MessagePart, CopyMessage } from './message'
 import { ScrollToBottom } from './ScrollToBottom'
@@ -56,20 +54,13 @@ export function DocChat({
   const toolInputsRef = useRef(new Map<string, string>())
 
   const transport = useMemo<
-    EventTransport<
-      ClientStreamRequest,
-      ClientStreamEvent<ClientMetadata, ChatClientData>
-    >
+    EventTransport<ClientStreamRequest, ClientStreamEvent<ClientMetadata>>
   >(() => {
-    const client = createHttpClientTransport<
-      ClientStreamRequest,
-      ChatClientData
-    >({
+    const client = createHttpClientTransport({
       endpoint: `${API_URL}/v1/chat/${docId}/${sessionId}`,
       format: 'jsonl',
       headers: () => ({ 'content-type': 'application/json', ...fpHeader() }),
       body: ({ request }) => JSON.stringify(request),
-      dataSchemas: { citations: citationsSchema },
     })
     // useChat speaks positional send() and maps each yielded event via
     // eventToUIEvent, so unwrap the stream envelopes here (no resume in use).
@@ -87,10 +78,7 @@ export function DocChat({
     }
   }, [docId, sessionId])
 
-  const chat = useChat<
-    ClientStreamRequest,
-    ClientStreamEvent<ClientMetadata, ChatClientData>
-  >({
+  const chat = useChat({
     transport,
     initialMessages: initialHistory,
     createRequest: ({ uiMessages }): ClientStreamRequest => ({

@@ -21,7 +21,7 @@ remote `CONVERTER_URL`).
 - Node 20+, pnpm 9 (`corepack enable`), Docker
 - Converter running locally (sibling repo) or via `CONVERTER_URL`
 - Copy `.env.example` → `.env` (root) and `apps/platform/.env.example` → `apps/platform/.env`
-- Set at least `OPENAI_API_KEY` and the DB/Redis/Qdrant URLs as needed
+- `DATABASE_URL` is required (API and worker refuse to start without it). Set Redis/Qdrant URLs, and `OPENAI_API_KEY` to enable chat.
 
 **Run** (PowerShell)
 

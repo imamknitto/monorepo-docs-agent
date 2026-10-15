@@ -1,206 +1,93 @@
-import { Hono } from 'hono'
-import { z } from 'zod'
-import {
-  customAgentEventsToClientStream,
-  parseClientStreamRequest,
-  type AgentClientStreamContext,
-  type ClientMetadata,
-} from '@anvia/client'
-import type { AgentStreamEvent } from '@anvia/core'
-import { createClientStreamResponse } from '@anvia/server'
-import {
-  IndexingError,
-  NotConfiguredError,
-  toCitations,
-} from '@halodocs/agent'
-import { DOC_ID_RE, USER_ID_RE, parseSessionId } from '../../config.js'
-import { getDocStatus } from '../documents/store.js'
+import { Hono } from "hono";
+import { agentToClientStream } from "@anvia/client";
+import { createClientStreamResponse } from "@anvia/server";
+import { NotConfiguredError } from "@halodocs/agent";
+import { getDocStatus } from "../documents/store.js";
 import {
   clearHistory,
-  lastUserText,
   loadUiHistory,
-  prepareAnswer,
-  retrievePages,
-  streamAnswer,
+  streamAgentAnswer,
   toClientError,
-} from './service.js'
+} from "./service.js";
+import { parseChatQuestion, readChatScope } from "./utils.js";
 
-const chatRoutes = new Hono()
+const chatRoutes = new Hono();
 
-function readUserId(c: {
-  req: { header: (k: string) => string | undefined }
-}): string | null {
-  const raw = c.req.header('x-user-id')?.trim()
-  if (!raw || !USER_ID_RE.test(raw)) return null
-  return raw
-}
-
-/** Wire shape of one source citation (plain type so it stays JSON-assignable). */
-type ChatCitation = { page: number; excerpt: string }
-
-/** Custom channel event: retrieved sources, sent ahead of the agent run. */
-type ChatChannelEvent = { type: 'citations'; citations: ChatCitation[] }
-
-/** Client-visible data channels of this route (one per custom event). */
-type ChatClientData = {
-  citations: ChatCitation[]
-}
-
-const citationsSchema = z.array(z.object({ page: z.number(), excerpt: z.string() }))
-
-/** Project one channel event into the client protocol (unknown events are dropped). */
-function mapChatChannelEvent(
-  event: ChatChannelEvent,
-  context: AgentClientStreamContext,
-) {
-  if (event.type !== 'citations') return undefined
-  return {
-    runId: context.runId,
-    type: 'data' as const,
-    name: 'citations' as const,
-    data: event.citations,
-  }
-}
-
-/** Lazily retrieved citations followed by the live agent run. */
-async function* chatChannel(
-  docId: string,
-  sessionId: string,
-  userId: string,
-  question: string,
-  summary: string | null,
-): AsyncGenerator<AgentStreamEvent<unknown, unknown> | ChatChannelEvent> {
-  const { pages, prompt, agent } = await prepareAnswer(docId, question, summary)
-  yield { type: 'citations', citations: toCitations(pages) }
-  yield* agent.stream({ prompt, session: { sessionId, userId, metadata: { docId } } })
-}
-
-chatRoutes.get('/chat/:docId/:sessionId', async (c) => {
-  const docId = c.req.param('docId')
-  const sessionId = c.req.param('sessionId')
-  const userId = readUserId(c)
-  if (!DOC_ID_RE.test(docId)) return c.json({ detail: 'Invalid doc_id.' }, 404)
-  const sess = parseSessionId(docId, sessionId)
-  if (!sess.ok) return c.json({ detail: sess.detail }, 400)
-  if (!userId) return c.json({ detail: 'Missing or invalid x-user-id header.' }, 400)
+chatRoutes.get("/chat/:docId/:sessionId", async (c) => {
+  const scope = readChatScope(
+    c.req.param("docId"),
+    c.req.param("sessionId"),
+    c.req.header("x-user-id"),
+  );
+  if (!scope.ok) return c.json({ detail: scope.detail }, scope.status);
   try {
-    const messages = await loadUiHistory(sessionId, userId)
-    return c.json({ sessionId, messages })
+    const messages = await loadUiHistory(scope.sessionId, scope.userId);
+    return c.json({ sessionId: scope.sessionId, messages });
   } catch (err) {
     if (err instanceof NotConfiguredError) {
-      return c.json({ detail: err.message }, 503)
+      return c.json({ detail: err.message }, 503);
     }
-    throw err
+    throw err;
   }
-})
+});
 
-chatRoutes.delete('/chat/:docId/:sessionId', async (c) => {
-  const docId = c.req.param('docId')
-  const sessionId = c.req.param('sessionId')
-  const userId = readUserId(c)
-  if (!DOC_ID_RE.test(docId)) return c.json({ detail: 'Invalid doc_id.' }, 404)
-  const sess = parseSessionId(docId, sessionId)
-  if (!sess.ok) return c.json({ detail: sess.detail }, 400)
-  if (!userId) return c.json({ detail: 'Missing or invalid x-user-id header.' }, 400)
+chatRoutes.delete("/chat/:docId/:sessionId", async (c) => {
+  const scope = readChatScope(
+    c.req.param("docId"),
+    c.req.param("sessionId"),
+    c.req.header("x-user-id"),
+  );
+  if (!scope.ok) return c.json({ detail: scope.detail }, scope.status);
   try {
-    await clearHistory(sessionId, userId)
-    return c.json({ sessionId, cleared: true })
+    await clearHistory(scope.sessionId, scope.userId);
+    return c.json({ sessionId: scope.sessionId, cleared: true });
   } catch (err) {
     if (err instanceof NotConfiguredError) {
-      return c.json({ detail: err.message }, 503)
+      return c.json({ detail: err.message }, 503);
     }
-    throw err
+    throw err;
   }
-})
+});
 
-chatRoutes.post('/chat/:docId/:sessionId', async (c) => {
-  const docId = c.req.param('docId')
-  const sessionId = c.req.param('sessionId')
-  const userId = readUserId(c)
-  if (!DOC_ID_RE.test(docId)) return c.json({ detail: 'Invalid doc_id.' }, 404)
-  const sess = parseSessionId(docId, sessionId)
-  if (!sess.ok) return c.json({ detail: sess.detail }, 400)
-  if (!userId) return c.json({ detail: 'Missing or invalid x-user-id header.' }, 400)
+chatRoutes.post("/chat/:docId/:sessionId", async (c) => {
+  const scope = readChatScope(
+    c.req.param("docId"),
+    c.req.param("sessionId"),
+    c.req.header("x-user-id"),
+  );
+  if (!scope.ok) return c.json({ detail: scope.detail }, scope.status);
 
-  let question: string
-  try {
-    const parsed = parseClientStreamRequest(await c.req.json().catch(() => null))
-    if (parsed.type !== 'messages') {
-      return c.json({ detail: 'Only message streams are supported.' }, 400)
-    }
-    question = lastUserText(parsed.messages)
-  } catch {
-    return c.json({ detail: 'Invalid stream request.' }, 422)
-  }
-  if (!question) return c.json({ detail: 'Field "question" is required.' }, 422)
-  if (question.length > 2000) {
-    return c.json({ detail: 'Field "question" exceeds 2000 characters.' }, 422)
-  }
+  const parsed = parseChatQuestion(await c.req.json().catch(() => null));
+  if (!parsed.ok) return c.json({ detail: parsed.detail }, parsed.status);
 
-  const status = await getDocStatus(docId)
+  const status = await getDocStatus(scope.docId);
   if (!status.found || !status.isProcessed) {
-    return c.json({ detail: 'Document is still indexing, try again shortly.' }, 503)
+    return c.json(
+      { detail: "Document is still indexing, try again shortly." },
+      503,
+    );
   }
 
-  return createClientStreamResponse<ClientMetadata, ChatClientData>({
-    events: customAgentEventsToClientStream<ChatChannelEvent, ClientMetadata, ChatClientData>({
-      events: chatChannel(docId, sessionId, userId, question, status.summary),
-      mapCustomEvent: mapChatChannelEvent,
+  return createClientStreamResponse({
+    events: agentToClientStream({
+      events: streamAgentAnswer(
+        scope.docId,
+        scope.sessionId,
+        scope.userId,
+        parsed.question,
+        status.summary,
+      ),
       mapError: (error) => {
         console.error(
-          `[chat:answer] doc=${docId} session=${sessionId} stream error`,
+          `[chat:answer] doc=${scope.docId} session=${scope.sessionId} stream error`,
           error instanceof Error ? (error.stack ?? error.message) : error,
-        )
-        return toClientError(error)
+        );
+        return toClientError(error);
       },
     }),
-    format: 'jsonl',
-    headers: { 'cache-control': 'no-cache', 'x-accel-buffering': 'no' },
-    dataSchemas: { citations: citationsSchema },
-  })
-})
+    format: "jsonl",
+    headers: { "cache-control": "no-cache", "x-accel-buffering": "no" },
+  });
+});
 
-chatRoutes.post('/ask', async (c) => {
-  const body = (await c.req.json().catch(() => null)) as {
-    docId?: unknown
-    question?: unknown
-    sessionId?: unknown
-  } | null
-  const docId = typeof body?.docId === 'string' ? body.docId : ''
-  const question = typeof body?.question === 'string' ? body.question.trim() : ''
-  const sessionId =
-    typeof body?.sessionId === 'string' && body.sessionId
-      ? body.sessionId
-      : `doc:${docId}:s:${crypto.randomUUID().replace(/-/g, '').slice(0, 24)}`
-  const userId = readUserId(c)
-  if (!DOC_ID_RE.test(docId) || !question) {
-    return c.json({ detail: 'Fields "docId" and "question" are required.' }, 422)
-  }
-  if (question.length > 2000) {
-    return c.json({ detail: 'Field "question" exceeds 2000 characters.' }, 422)
-  }
-  if (!userId) return c.json({ detail: 'Missing or invalid x-user-id header.' }, 400)
-
-  const status = await getDocStatus(docId)
-  if (!status.found || !status.isProcessed) {
-    return c.json({ detail: 'Document is still indexing, try again shortly.' }, 503)
-  }
-
-  try {
-    const gen = streamAnswer(docId, sessionId, userId, question, status.summary)
-    let answer = ''
-    let citations = toCitations(await retrievePages(docId, question))
-    for await (const event of gen) {
-      if (event.type === 'text_delta') answer += event.delta
-      else if (event.type === 'citations') citations = event.citations
-      else if (event.type === 'error') return c.json({ detail: event.message }, 502)
-    }
-    return c.json({ answer, citations, sessionId })
-  } catch (err) {
-    if (err instanceof NotConfiguredError) return c.json({ detail: err.message }, 503)
-    if (err instanceof IndexingError) return c.json({ detail: err.message }, 503)
-    return c.json({ detail: err instanceof Error ? err.message : 'ask failed' }, 502)
-  }
-})
-
-export { chatRoutes }
+export { chatRoutes };

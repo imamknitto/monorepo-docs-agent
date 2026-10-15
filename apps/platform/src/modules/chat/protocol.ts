@@ -5,10 +5,6 @@ import type {
 import type { UIMessage, UIMessagePart, UIStreamEvent } from '@anvia/react'
 import { t } from '../../lib/i18n'
 
-/** Wire shape of one source citation, mirrors the API's citations data channel. */
-export type ChatCitation = { page: number; excerpt: string }
-export type ChatClientData = { citations: ChatCitation[] }
-
 /** Tool part of the installed @anvia/react UI model. */
 export type UIToolPart = Extract<UIMessagePart, { type: 'tool' }>
 
@@ -22,23 +18,6 @@ type UIJson = NonNullable<UIToolPart['input']>
  */
 export function uiJson(value: unknown): UIJson {
   return value as UIJson
-}
-
-export const citationsSchema = {
-  safeParse: (value: unknown) => {
-    if (!Array.isArray(value)) return { success: false as const }
-    const data: ChatCitation[] = []
-    for (const item of value) {
-      if (typeof item !== 'object' || item === null)
-        return { success: false as const }
-      const { page, excerpt } = item as Record<string, unknown>
-      if (typeof page !== 'number' || typeof excerpt !== 'string') {
-        return { success: false as const }
-      }
-      data.push({ page, excerpt })
-    }
-    return { success: true as const, data }
-  },
 }
 
 function runningToolPart(
@@ -63,7 +42,7 @@ function runningToolPart(
 
 /** Fold one client-protocol event into a UI event (run/turn frames and data need no UI). */
 export function clientEventToUIEvent(
-  event: ClientStreamEvent<ClientMetadata, ChatClientData>,
+  event: ClientStreamEvent<ClientMetadata>,
   toolInputs: Map<string, string>,
 ): UIStreamEvent | undefined {
   switch (event.type) {

@@ -73,9 +73,6 @@ export interface ConverterClient {
   ): Promise<Response>;
   getJob(jobId: string, signal?: AbortSignal): Promise<Response>;
   cancelJob(jobId: string, signal?: AbortSignal): Promise<Response>;
-  listDocuments(signal?: AbortSignal): Promise<Response>;
-  download(docId: string, signal?: AbortSignal): Promise<Response>;
-  deleteDoc(docId: string, signal?: AbortSignal): Promise<Response>;
 }
 
 export const converterClient: ConverterClient = {
@@ -138,47 +135,6 @@ export const converterClient: ConverterClient = {
     }
     const res = await fetchWithDispatcher(
       `${CONVERTER_URL}/v1/convert/jobs/${jobId}`,
-      {
-        method: "DELETE",
-        headers: makeHeaders(),
-        signal,
-      },
-    );
-    return toStandardResponse(res);
-  },
-
-  async listDocuments(signal) {
-    const res = await fetchWithDispatcher(`${CONVERTER_URL}/v1/documents`, {
-      headers: makeHeaders(),
-      signal,
-    });
-    return toStandardResponse(res);
-  },
-
-  async download(docId, signal) {
-    if (!DOC_ID_RE.test(docId)) {
-      return new Response(JSON.stringify({ detail: "Invalid doc_id." }), {
-        status: 400,
-      });
-    }
-    const res = await fetchWithDispatcher(
-      `${CONVERTER_URL}/v1/download/${docId}`,
-      {
-        headers: makeHeaders(),
-        signal,
-      },
-    );
-    return toStandardResponse(res);
-  },
-
-  async deleteDoc(docId, signal) {
-    if (!DOC_ID_RE.test(docId)) {
-      return new Response(JSON.stringify({ detail: "Invalid doc_id." }), {
-        status: 400,
-      });
-    }
-    const res = await fetchWithDispatcher(
-      `${CONVERTER_URL}/v1/documents/${docId}`,
       {
         method: "DELETE",
         headers: makeHeaders(),

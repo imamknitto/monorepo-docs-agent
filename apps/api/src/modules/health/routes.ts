@@ -1,25 +1,27 @@
 import { Hono } from 'hono'
-import { converterClient } from '../converter/client.js'
+import { getHealthSnapshot } from './service.js'
 
 const healthRoutes = new Hono()
 
-const startedAt = Date.now()
+function converterStatus(snapshot: Awaited<ReturnType<typeof getHealthSnapshot>>) {
+  return snapshot.converter.reachable
+    ? { status: 'ok' as const, version: snapshot.converter.version ?? 'unknown' }
+    : { status: 'unreachable' as const }
+}
 
 /** Liveness probe - always returns ok if gateway is running */
 healthRoutes.get('/health/live', (c) => c.json({ status: 'ok', service: 'api-gateway' }))
 
 /** Readiness probe - checks converter reachability */
 healthRoutes.get('/health/ready', async (c) => {
-  const converter = await converterClient.health()
-  const ready = converter.reachable
+  const snapshot = await getHealthSnapshot()
+  const ready = snapshot.converter.reachable
   return c.json(
     {
       status: ready ? 'ok' : 'not-ready',
       service: 'api-gateway',
-      uptime_seconds: Math.floor((Date.now() - startedAt) / 1000),
-      converter: converter.reachable
-        ? { status: 'ok', version: converter.version ?? 'unknown' }
-        : { status: 'unreachable' },
+      uptime_seconds: snapshot.uptimeSeconds,
+      converter: converterStatus(snapshot),
     },
     ready ? 200 : 503,
   )
@@ -27,14 +29,12 @@ healthRoutes.get('/health/ready', async (c) => {
 
 /** Combined health - for general monitoring */
 healthRoutes.get('/health', async (c) => {
-  const converter = await converterClient.health()
+  const snapshot = await getHealthSnapshot()
   return c.json({
-    status: converter.reachable ? 'ok' : 'degraded',
+    status: snapshot.converter.reachable ? 'ok' : 'degraded',
     service: 'api-gateway',
-    uptime_seconds: Math.floor((Date.now() - startedAt) / 1000),
-    converter: converter.reachable
-      ? { status: 'ok', version: converter.version ?? 'unknown' }
-      : { status: 'unreachable' },
+    uptime_seconds: snapshot.uptimeSeconds,
+    converter: converterStatus(snapshot),
   })
 })
 

@@ -1,280 +1,83 @@
 import { Hono } from "hono";
 import { bodyLimit } from "hono/body-limit";
-import { MAX_UPLOAD_BYTES, MAX_UPLOAD_MB, DOC_ID_RE } from "../../config.js";
-import { converterClient } from "./client.js";
-import { getDocumentQueue } from "../../config/queue.js";
-import { upsertPendingDoc } from "../../modules/documents/store.js";
+import { DOC_ID_RE, MAX_UPLOAD_BYTES } from "../../config.js";
+import { stripImageBytes } from "../documents/artifacts.js";
 import {
-  ArtifactDiskFullError,
-  artifactExists,
-  putArtifact,
-  stripImageBytes,
-  type ArtifactPayload,
-} from "../documents/artifacts.js";
-
-function passThrough(res: Response): Response {
-  const headers = new Headers();
-  for (const key of ["content-type", "content-length", "content-disposition"]) {
-    const v = res.headers.get(key);
-    if (v) headers.set(key, v);
-  }
-  return new Response(res.body, { status: res.status, headers });
-}
+  cancelConversionJob,
+  convertDocument,
+  getConversionJob,
+  startConversion,
+} from "./service.js";
+import { parseConvertForm } from "./utils.js";
 
 const converterRoutes = new Hono();
 
-// Apply body limit to convert endpoints
 converterRoutes.use(
   "/convert*",
   bodyLimit({ maxSize: MAX_UPLOAD_BYTES + 1024 * 1024 }),
 );
 
-/** Record a converted doc + enqueue indexing. Idempotent: skips queueing twice. */
-async function enqueueIndexing(
-  docId: string,
-  name: string,
-  markdownUrl: string | null,
-  stats: unknown,
-  reqId?: string,
-): Promise<void> {
-  if (!DOC_ID_RE.test(docId)) {
-    console.warn(
-      `[index:enqueue] skipped: invalid doc_id=${docId} req=${reqId ?? "-"}`,
-    );
-    return;
-  }
-  // Async jobs are polled repeatedly — don't enqueue twice.
-  try {
-    const { getDocStatus } = await import("../../modules/documents/store.js");
-    const existing = await getDocStatus(docId);
-    if (existing.found) return;
-  } catch {
-    /* status check best-effort; fall through to upsert */
-  }
-  try {
-    const ok = await upsertPendingDoc({
-      docId,
-      name,
-      markdownUrl,
-      stats: stats ?? {},
-    });
-    console.log(
-      `[index:enqueue] doc=${docId} upsert=${ok ? "ok" : "SKIPPED(no DATABASE_URL)"} markdownUrl=${markdownUrl ?? "(null)"}`,
-    );
-    const queue = getDocumentQueue();
-    if (!queue) {
-      console.error(
-        `[index:enqueue] doc=${docId} FAILED queue unavailable (REDIS_URL invalid/unreachable) — worker will never pick this up`,
-      );
-    } else {
-      try {
-        const job = await queue.add("index", { docId, name, markdownUrl });
-        console.log(`[index:enqueue] doc=${docId} queued job=${job.id}`);
-      } catch (err) {
-        console.error(
-          `[index:enqueue] doc=${docId} FAILED queue.add err=${err instanceof Error ? err.message : String(err)}`,
-          err instanceof Error ? err.stack : "",
-        );
-      }
-    }
-  } catch (err) {
-    console.warn(
-      `[index:enqueue] skipped req=${reqId ?? "-"} err=${err instanceof Error ? err.message : String(err)}`,
-      err instanceof Error ? err.stack : "",
-    );
-  }
-}
-
 /** Sync conversion: returns result directly */
 converterRoutes.post("/convert", async (c) => {
-  const requestIdHeader = c.get("requestId") as string | undefined;
+  const requestId = c.get("requestId") as string | undefined;
   let form: FormData;
   try {
     form = await c.req.formData();
   } catch {
     return c.json({ detail: "Invalid multipart body." }, 400);
   }
-  const file = form.get("file");
-  const scanImages = form.get("scan_images");
-  const extractImages = form.get("extract_images");
-  const ocrImages = form.get("ocr_images");
-  const ocrScopeRaw = form.get("ocr_scope");
-  const ocrScope = ocrScopeRaw === "flowchart" ? "flowchart" : "all";
-  const webhookUrl = form.get("webhook_url")?.toString() ?? undefined;
+  const upload = parseConvertForm(form);
+  if (!upload.ok) return c.json({ detail: upload.detail }, upload.status);
 
-  if (!(file instanceof File))
-    return c.json({ detail: 'Field "file" is required.' }, 422);
-  if (!file.name.toLowerCase().endsWith(".pdf")) {
-    return c.json({ detail: "v1 only supports PDF files." }, 400);
-  }
-  if (file.size > MAX_UPLOAD_BYTES) {
+  const result = await convertDocument(upload, requestId);
+  if (result.type === "timeout") {
     return c.json(
-      { detail: `File exceeds the ${MAX_UPLOAD_MB} MB limit.` },
-      413,
+      {
+        detail:
+          "Conversion timed out. The file is likely large — retry with async mode or turn off image OCR.",
+        code: "convert_timeout",
+      },
+      504,
     );
   }
-
-  const out = new FormData();
-  out.append("file", file, file.name);
-  out.append(
-    "scan_images",
-    String(scanImages === "true" || scanImages === "on"),
-  );
-  out.append(
-    "extract_images",
-    extractImages === null
-      ? "true"
-      : String(extractImages === "true" || extractImages === "on"),
-  );
-  out.append("ocr_images", String(ocrImages === "true" || ocrImages === "on"));
-  out.append("ocr_scope", ocrScope);
-  if (webhookUrl) {
-    out.append("webhook_url", webhookUrl);
-  }
-
-  let res: Response;
-  const convertStarted = Date.now();
-  console.log(
-    `[convert] start req=${requestIdHeader ?? "-"} file=${file.name} bytes=${file.size}`,
-  );
-  try {
-    res = await converterClient.convertSync(out, undefined, requestIdHeader);
-  } catch (err) {
-    const elapsed = Date.now() - convertStarted;
-    const code =
-      (err as { cause?: { code?: string } })?.cause?.code ??
-      (err as { code?: string })?.code;
-    const name = err instanceof Error ? err.name : "";
-    const timedOut =
-      name === "TimeoutError" ||
-      code === "UND_ERR_HEADERS_TIMEOUT" ||
-      code === "UND_ERR_BODY_TIMEOUT";
-    console.error(
-      `converter ${timedOut ? "timeout" : "unreachable"} ` +
-        `req=${requestIdHeader ?? "-"} file=${file.name} bytes=${file.size} ` +
-        `elapsed=${elapsed}ms err=${err instanceof Error ? err.message : String(err)}`,
-      err,
+  if (result.type === "unavailable" || result.type === "upstream-failed") {
+    return c.json(
+      {
+        detail:
+          result.type === "upstream-failed"
+            ? "Conversion failed upstream."
+            : "Conversion service unavailable.",
+      },
+      502,
     );
-    if (timedOut) {
-      return c.json(
-        {
-          detail:
-            "Conversion timed out. The file is likely large — retry with async mode or turn off image OCR.",
-          code: "convert_timeout",
-        },
-        504,
-      );
-    }
-    console.error("converter unreachable", err);
-    return c.json({ detail: "Conversion service unavailable." }, 502);
   }
-  console.log(
-    `[convert] upstream req=${requestIdHeader ?? "-"} status=${res.status} elapsed=${Date.now() - convertStarted}ms`,
-  );
-  if (res.status >= 500) {
-    console.error("converter error", res.status);
-    return c.json({ detail: "Conversion failed upstream." }, 502);
-  }
-
-  if (!res.ok) return passThrough(res);
-
-  let payload: ArtifactPayload;
-  try {
-    payload = (await res.json()) as ArtifactPayload;
-  } catch {
+  if (result.type === "passthrough") return result.response;
+  if (result.type === "bad-json") {
     return c.json({ detail: "Conversion response was not JSON." }, 502);
   }
-  if (payload.doc_id) {
-    try {
-      if (!(await artifactExists(payload.doc_id))) {
-        await putArtifact({ ...payload, filename: file.name });
-      }
-      await enqueueIndexing(
-        payload.doc_id,
-        file.name,
-        payload.markdown_url ?? null,
-        payload.stats,
-        requestIdHeader,
-      );
-    } catch (err) {
-      if (err instanceof ArtifactDiskFullError) {
-        return c.json(
-          { detail: "Artifact storage is full, try again later." },
-          507,
-        );
-      }
-      console.error(
-        `[convert] store failed req=${requestIdHeader ?? "-"} err=${err instanceof Error ? err.message : String(err)}`,
-        err instanceof Error ? err.stack : "",
-      );
-      return c.json({ detail: "Failed to store conversion result." }, 502);
-    }
+  if (result.type === "store-failed") {
+    return c.json({ detail: result.detail }, result.status);
   }
-
-  return c.json(stripImageBytes(payload));
+  return c.json(stripImageBytes(result.payload));
 });
 
 /** Async conversion: returns 202 immediately, client polls GET /v1/convert/jobs/:jobId */
 converterRoutes.post("/convert/jobs", async (c) => {
-  const requestIdHeader = c.get("requestId") as string | undefined;
+  const requestId = c.get("requestId") as string | undefined;
   let form: FormData;
   try {
     form = await c.req.formData();
   } catch {
     return c.json({ detail: "Invalid multipart body." }, 400);
   }
-  const file = form.get("file");
-  const scanImages = form.get("scan_images");
-  const extractImages = form.get("extract_images");
-  const ocrImages = form.get("ocr_images");
-  const ocrScopeRaw = form.get("ocr_scope");
-  const ocrScope = ocrScopeRaw === "flowchart" ? "flowchart" : "all";
-  const webhookUrl = form.get("webhook_url")?.toString() ?? undefined;
+  const upload = parseConvertForm(form);
+  if (!upload.ok) return c.json({ detail: upload.detail }, upload.status);
 
-  if (!(file instanceof File))
-    return c.json({ detail: 'Field "file" is required.' }, 422);
-  if (!file.name.toLowerCase().endsWith(".pdf")) {
-    return c.json({ detail: "v1 only supports PDF files." }, 400);
-  }
-  if (file.size > MAX_UPLOAD_BYTES) {
-    return c.json(
-      { detail: `File exceeds the ${MAX_UPLOAD_MB} MB limit.` },
-      413,
-    );
-  }
-
-  const out = new FormData();
-  out.append("file", file, file.name);
-  out.append(
-    "scan_images",
-    String(scanImages === "true" || scanImages === "on"),
-  );
-  out.append(
-    "extract_images",
-    extractImages === null
-      ? "true"
-      : String(extractImages === "true" || extractImages === "on"),
-  );
-  out.append("ocr_images", String(ocrImages === "true" || ocrImages === "on"));
-  out.append("ocr_scope", ocrScope);
-  if (webhookUrl) {
-    out.append("webhook_url", webhookUrl);
-  }
-
-  console.log(
-    `[convert:async] start req=${requestIdHeader ?? "-"} file=${file.name} bytes=${file.size}`,
-  );
-  let res: Response;
-  try {
-    res = await converterClient.convertAsync(out, undefined, requestIdHeader);
-  } catch (err) {
-    console.error(
-      `[convert:async] converter unreachable req=${requestIdHeader ?? "-"} err=${err instanceof Error ? err.message : String(err)}`,
-      err,
-    );
+  const result = await startConversion(upload, requestId);
+  if (result.type === "unavailable") {
     return c.json({ detail: "Conversion service unavailable." }, 502);
   }
-  if (res.status === 429) {
+  if (result.type === "queue-full") {
     return c.json(
       {
         detail: "Conversion queue is full, try again shortly.",
@@ -283,90 +86,50 @@ converterRoutes.post("/convert/jobs", async (c) => {
       429,
     );
   }
-  if (res.status >= 500) {
-    console.error("[convert:async] converter error", res.status);
+  if (result.type === "upstream-failed") {
     return c.json({ detail: "Conversion failed upstream." }, 502);
   }
-  return passThrough(res);
+  return result.response;
 });
 
 /** Get async job status */
 converterRoutes.get("/convert/jobs/:jobId", async (c) => {
   const jobId = c.req.param("jobId");
   if (!DOC_ID_RE.test(jobId)) return c.json({ detail: "Invalid job id." }, 400);
-  let res: Response;
-  try {
-    res = await converterClient.getJob(jobId);
-  } catch {
+  const result = await getConversionJob(
+    jobId,
+    c.get("requestId") as string | undefined,
+  );
+  if (result.type === "not-found") {
+    return c.json({ detail: "Job not found or expired." }, 404);
+  }
+  if (result.type === "unavailable") {
     return c.json({ detail: "Conversion service unavailable." }, 502);
   }
-  if (res.status === 404)
-    return c.json({ detail: "Job not found or expired." }, 404);
-  if (!res.ok)
-    return c.json({ detail: "Conversion service unavailable." }, 502);
-
-  const requestIdHeader = c.get("requestId") as string | undefined;
-  let job: {
-    status?: string;
-    doc_id?: string;
-    filename?: string | null;
-    result?: ArtifactPayload | null;
-  };
-  try {
-    job = (await res.json()) as typeof job;
-  } catch {
+  if (result.type === "bad-json") {
     return c.json({ detail: "Conversion response was not JSON." }, 502);
   }
-  if (job.status === "done" && job.result?.doc_id) {
-    try {
-      if (!(await artifactExists(job.result.doc_id))) {
-        await putArtifact({
-          ...job.result,
-          filename: job.filename ?? job.result.doc_id,
-        });
-      }
-      await enqueueIndexing(
-        job.result.doc_id,
-        job.filename ?? job.result.doc_id,
-        job.result.markdown_url ?? null,
-        job.result.stats,
-        requestIdHeader,
-      );
-    } catch (err) {
-      if (err instanceof ArtifactDiskFullError) {
-        return c.json(
-          { detail: "Artifact storage is full, try again later." },
-          507,
-        );
-      }
-      console.error(
-        `[convert:async] store failed req=${requestIdHeader ?? "-"} err=${err instanceof Error ? err.message : String(err)}`,
-        err instanceof Error ? err.stack : "",
-      );
-      return c.json({ detail: "Failed to store conversion result." }, 502);
-    }
+  if (result.type === "store-failed") {
+    return c.json({ detail: result.detail }, result.status);
   }
-
-  return c.json(stripImageBytes(job));
+  return c.json(stripImageBytes(result.job));
 });
 
 /** Cancel async job (queued or processing) */
 converterRoutes.delete("/convert/jobs/:jobId", async (c) => {
   const jobId = c.req.param("jobId");
   if (!DOC_ID_RE.test(jobId)) return c.json({ detail: "Invalid job id." }, 400);
-  let res: Response;
-  try {
-    res = await converterClient.cancelJob(jobId);
-  } catch {
+  const result = await cancelConversionJob(jobId);
+  if (result.type === "not-found") {
+    return c.json({ detail: "Job not found or expired." }, 404);
+  }
+  if (result.type === "conflict") {
+    return c.json({ detail: "Cannot cancel completed or failed job." }, 409);
+  }
+  if (result.type === "unavailable") {
     return c.json({ detail: "Conversion service unavailable." }, 502);
   }
-  if (res.status === 404)
-    return c.json({ detail: "Job not found or expired." }, 404);
-  if (res.status === 409)
-    return c.json({ detail: "Cannot cancel completed or failed job." }, 409);
-  if (!res.ok)
-    return c.json({ detail: "Conversion service unavailable." }, 502);
-  return passThrough(res);
+  return result.response;
 });
 
 export { converterRoutes };
