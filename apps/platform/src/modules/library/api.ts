@@ -1,4 +1,4 @@
-import { API_URL, errDetail } from '../../lib/api'
+import { apiFetch, errDetail } from '../../lib/api'
 import { t } from '../../lib/i18n'
 
 export interface DocSummary {
@@ -15,17 +15,19 @@ export interface DocSummary {
     images_skipped: number
   }
   warnings?: string[]
+  isProcessed?: boolean
+  workspace_id?: string | null
 }
 
 export async function listDocuments(): Promise<DocSummary[]> {
-  const res = await fetch(`${API_URL}/v1/documents`)
+  const res = await apiFetch('/v1/documents')
   if (!res.ok) throw new Error(t('api.errDocs', { status: res.status }))
   const body = (await res.json()) as { documents: DocSummary[] }
   return body.documents ?? []
 }
 
 export async function deleteDocument(docId: string): Promise<void> {
-  const res = await fetch(`${API_URL}/v1/documents/${docId}`, { method: 'DELETE' })
+  const res = await apiFetch(`/v1/documents/${docId}`, { method: 'DELETE' })
   if (!res.ok) {
     const detail = await res.text().catch(() => '')
     throw new Error(errDetail(detail, t('api.errDeleteDoc', { status: res.status })))

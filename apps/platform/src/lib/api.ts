@@ -6,6 +6,18 @@ export function absoluteUrl(path: string): string {
   return `${API_URL}${path.startsWith('/') ? '' : '/'}${path}`
 }
 
+/**
+ * fetch to the gateway with the session cookie attached. The platform and API
+ * are the same site on different ports, so credentialed requests are needed
+ * for login-scoped routes (workspaces, owned files).
+ */
+export function apiFetch(
+  path: string,
+  init: RequestInit = {},
+): Promise<Response> {
+  return fetch(absoluteUrl(path), { credentials: 'include', ...init })
+}
+
 export function errDetail(text: string, fallback: string): string {
   try {
     const body = JSON.parse(text) as { detail?: string }

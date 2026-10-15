@@ -13,6 +13,7 @@
     "@anvia/react": "0.8.13",
     "@anvia/react-ui": "0.5.1",
     "@tanstack/react-router": "^1.95.0",
+    "better-auth": "1.7.9",
     "hast-util-sanitize": "^5.0.2",
     "react": "^19.0.0",
     "react-dom": "^19.0.0",

@@ -1,4 +1,5 @@
 import { Link, Outlet, createRootRoute } from '@tanstack/react-router'
+import { AuthControl } from '../components/AuthControl'
 import { ConfirmProvider } from '../components/ConfirmDialog'
 import { LangSwitch } from '../components/LangSwitch'
 import { ThemeToggle } from '../components/ThemeToggle'
@@ -44,6 +45,7 @@ function RootLayout() {
               </a>
               <LangSwitch />
               <ThemeToggle />
+              <AuthControl />
             </div>
           </div>
         </header>

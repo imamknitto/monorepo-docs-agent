@@ -6,6 +6,8 @@ export interface PendingDoc {
   name: string
   markdownUrl: string | null
   stats: unknown
+  ownerId?: string | null
+  workspaceId?: string | null
 }
 
 /** Record converter result so the async worker can index it. */
@@ -16,6 +18,8 @@ export async function upsertPendingDoc(doc: PendingDoc): Promise<void> {
       name: doc.name,
       markdownUrl: doc.markdownUrl,
       stats: (doc.stats ?? {}) as object,
+      ...(doc.ownerId !== undefined ? { ownerId: doc.ownerId } : {}),
+      ...(doc.workspaceId !== undefined ? { workspaceId: doc.workspaceId } : {}),
     },
     create: {
       id: doc.docId,
@@ -23,6 +27,8 @@ export async function upsertPendingDoc(doc: PendingDoc): Promise<void> {
       markdownUrl: doc.markdownUrl,
       stats: (doc.stats ?? {}) as object,
       isProcessed: false,
+      ownerId: doc.ownerId ?? null,
+      workspaceId: doc.workspaceId ?? null,
     },
   })
 }

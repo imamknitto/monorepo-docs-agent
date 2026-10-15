@@ -10,6 +10,19 @@ datasource db {
 // RAG documents indexed from md-conversion-service-py markdown.
 // id reuses the converter doc_id (32 hex chars) so the gateway can
 // correlate converter artifacts, DB rows and Qdrant points.
+// A user-owned container of persistent documents. Guests never have one.
+// Deleting a workspace is done through the service (docs first), hence
+// Document.workspace uses onDelete: Restrict — a bare DB delete would fail.
+model Workspace {
+  id        String     @id @default(cuid())
+  ownerId   String
+  name      String
+  createdAt DateTime   @default(now())
+  documents Document[]
+
+  @@index([ownerId])
+}
+
 model Document {
   id          String         @id
   name        String
@@ -17,8 +30,16 @@ model Document {
   stats       Json?
   summary     String?
   isProcessed Boolean        @default(false)
+  // Ownership. Null for guest docs (anonymous fp: uploads, still expiring).
+  // Persistent docs are those with workspaceId set (see artifacts.putArtifact).
+  ownerId     String?
+  workspaceId String?
+  workspace   Workspace?     @relation(fields: [workspaceId], references: [id], onDelete: Restrict)
   createdAt   DateTime       @default(now())
   pages       DocumentPage[]
+
+  @@index([ownerId])
+  @@index([workspaceId])
 }
 
 model DocumentPage {
@@ -75,4 +96,64 @@ model AgentMemoryError {
   createdAt       DateTime           @default(now())
 
   @@index([runId])
+}
+
+// Better Auth (v1.7.x) core tables. Model names are PascalCase but the
+// Prisma adapter addresses them by lowercased first letter (`prisma.user`),
+// which matches the adapter's default model names. Field set matches
+// @better-auth/core getAuthTables so its runtime schema check passes.
+model User {
+  id            String    @id
+  name          String
+  email         String    @unique
+  emailVerified Boolean   @default(false)
+  image         String?
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+  sessions      Session[]
+  accounts      Account[]
+}
+
+model Session {
+  id        String   @id
+  expiresAt DateTime
+  token     String   @unique
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  ipAddress String?
+  userAgent String?
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+}
+
+model Account {
+  id                    String    @id
+  accountId             String
+  providerId            String
+  userId                String
+  user                  User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  accessToken           String?
+  refreshToken          String?
+  idToken               String?
+  accessTokenExpiresAt  DateTime?
+  refreshTokenExpiresAt DateTime?
+  scope                 String?
+  password              String?
+  createdAt             DateTime  @default(now())
+  updatedAt             DateTime  @updatedAt
+
+  @@index([userId])
+}
+
+model Verification {
+  id         String   @id
+  identifier String
+  value      String
+  expiresAt  DateTime
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  @@index([identifier])
 }

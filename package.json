@@ -4,7 +4,7 @@
   "private": true,
   "packageManager": "pnpm@9.15.9",
   "engines": {
-    "node": ">=20"
+    "node": ">=24"
   },
   "scripts": {
     "dev:platform": "pnpm --filter @halodocs/platform dev",
@@ -19,7 +19,8 @@
     "db:migrate": "pnpm --filter @halodocs/api db:migrate",
     "db:studio": "pnpm --filter @halodocs/api db:studio",
     "build": "pnpm -r build",
-    "typecheck": "pnpm -r exec tsc --noEmit"
+    "typecheck": "pnpm -r exec tsc --noEmit",
+    "test": "pnpm --filter @halodocs/api test"
   },
   "devDependencies": {
     "concurrently": "^9.1.2",

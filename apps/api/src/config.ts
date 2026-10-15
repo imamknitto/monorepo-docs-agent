@@ -46,8 +46,19 @@ export const CONVERT_TIMEOUT_MS = Number(env("CONVERT_TIMEOUT_MS", "600000"));
 
 export const DOC_ID_RE = /^[0-9a-f]{32}$/;
 
-/** Browser fingerprint identity: fp:<stable id> (see platform lib/identity.ts). */
-export const USER_ID_RE = /^fp:[A-Za-z0-9_-]{8,64}$/;
+/**
+ * Memory identity string, namespaced by auth kind:
+ * - `fp:<stable id>`  guest browser fingerprint (platform lib/identity.ts)
+ * - `u:<userId>`      logged-in Better Auth user
+ * Both flow into AgentMemorySession.userId; the prefix keeps them from
+ * colliding and lets the API tell a guest from a registered user.
+ */
+export const USER_ID_RE = /^(fp|u):[A-Za-z0-9_-]{8,64}$/;
+
+/** Logged-in identity string for a Better Auth user id. */
+export function sessionUserId(userId: string): string {
+  return `u:${userId}`;
+}
 
 export function parseSessionId(
   docId: string,
@@ -70,6 +81,26 @@ export const PUBLIC_BASE_URL = env(
   "PUBLIC_BASE_URL",
   "http://127.0.0.1:8377",
 ).replace(/\/$/, "");
+
+/** Browser origins allowed to call the gateway (CORS + Better Auth trustedOrigins). */
+export const PLATFORM_ORIGINS = env(
+  "PLATFORM_URL",
+  "http://127.0.0.1:8378,http://localhost:8378",
+)
+  .split(",")
+  .map((s) => s.trim())
+  .filter(Boolean);
+
+// ---- Auth (Better Auth). See modules/auth. ----
+
+/** Public URL of this gateway; Better Auth builds OAuth callbacks from it. */
+export const BETTER_AUTH_URL = env(
+  "BETTER_AUTH_URL",
+  PUBLIC_BASE_URL,
+).replace(/\/$/, "");
+export const BETTER_AUTH_SECRET = process.env.BETTER_AUTH_SECRET ?? "";
+export const GOOGLE_CLIENT_ID = process.env.GOOGLE_CLIENT_ID ?? "";
+export const GOOGLE_CLIENT_SECRET = process.env.GOOGLE_CLIENT_SECRET ?? "";
 
 export const DATABASE_URL = requiredEnv("DATABASE_URL");
 export const REDIS_URL = env("REDIS_URL", "redis://127.0.0.1:16379");

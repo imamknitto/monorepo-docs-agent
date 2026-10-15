@@ -51,9 +51,10 @@ function clearSavedJob(): void {
  * Upload + conversion state machine. Every conversion runs as a background
  * job (progress + cancel + reload-safe): the job id is persisted to
  * localStorage so a page reload resumes polling instead of losing the job.
- * Navigates to the result page on success.
+ * Navigates to the result page on success. When `workspaceId` is given the
+ * doc is uploaded into that workspace and the result opens under it.
  */
-export function useConvert() {
+export function useConvert(workspaceId?: string) {
   const navigate = useNavigate()
   const { t } = useI18n()
   const confirm = useConfirm()
@@ -103,7 +104,14 @@ export function useConvert() {
     } catch {
       /* storage full/blocked — result page still works via fetch */
     }
-    void navigate({ to: '/r/$docId', params: { docId: result.doc_id } })
+    if (workspaceId) {
+      void navigate({
+        to: '/w/$workspaceId/d/$docId',
+        params: { workspaceId, docId: result.doc_id },
+      })
+    } else {
+      void navigate({ to: '/r/$docId', params: { docId: result.doc_id } })
+    }
   }
 
   function failWith(err: unknown) {
@@ -118,7 +126,16 @@ export function useConvert() {
   }
 
   async function runAsync(f: File) {
-    const job = await convertPdfAsync(f, scanImages, extractImages, ocrImages, ocrScope)
+    const job = await convertPdfAsync(
+      f,
+      scanImages,
+      extractImages,
+      ocrImages,
+      ocrScope,
+      undefined,
+      undefined,
+      workspaceId,
+    )
     saveSavedJob({
       job_id: job.job_id,
       doc_id: job.doc_id,
@@ -128,6 +145,7 @@ export function useConvert() {
     setCurrentJobId(job.job_id)
     try {
       const result = await pollConvertJob(job.job_id, {
+        workspaceId,
         onUpdate: (s) => setProgress(describeJob(s)),
       })
       finish(result)
@@ -190,6 +208,7 @@ export function useConvert() {
     setProgress(t('upload.resumed'))
     pollConvertJob(saved.job_id, {
       signal: ac.signal,
+      workspaceId,
       onUpdate: (s) => {
         if (active) setProgress(describeJob(s))
       },

@@ -1,10 +1,17 @@
-import { API_URL, errDetail } from '../../lib/api'
+import { API_URL, apiFetch, errDetail } from '../../lib/api'
 import { t } from '../../lib/i18n'
 
 export const MAX_UPLOAD_BYTES = 30 * 1024 * 1024
 
 /** Files above this go straight to background conversion (POST /v1/convert/jobs). */
 export const ASYNC_THRESHOLD_BYTES = 8 * 1024 * 1024
+
+/** Conversion endpoints: workspace-scoped when a workspaceId is given. */
+function convertBase(workspaceId?: string): string {
+  return workspaceId
+    ? `${API_URL}/v1/workspaces/${workspaceId}/convert`
+    : `${API_URL}/v1/convert`
+}
 
 export interface ImageMeta {
   page: number
@@ -79,8 +86,9 @@ export async function convertPdfAsync(
   ocrScope: OcrScope = 'all',
   signal?: AbortSignal,
   webhookUrl?: string,
+  workspaceId?: string,
 ): Promise<ConvertJobAccepted> {
-  const res = await fetch(`${API_URL}/v1/convert/jobs`, {
+  const res = await apiFetch(`${convertBase(workspaceId)}/jobs`, {
     method: 'POST',
     body: convertForm(file, scanImages, extractImages, ocrImages, ocrScope, webhookUrl),
     signal,
@@ -97,8 +105,9 @@ export async function convertPdfAsync(
 export async function getConvertJob(
   jobId: string,
   signal?: AbortSignal,
+  workspaceId?: string,
 ): Promise<ConvertJobStatus> {
-  const res = await fetch(`${API_URL}/v1/convert/jobs/${jobId}`, { signal })
+  const res = await apiFetch(`${convertBase(workspaceId)}/jobs/${jobId}`, { signal })
   if (!res.ok) {
     const text = await res.text().catch(() => '')
     throw new Error(
@@ -108,8 +117,10 @@ export async function getConvertJob(
   return (await res.json()) as ConvertJobStatus
 }
 
-export async function cancelConvertJob(jobId: string): Promise<void> {
-  const res = await fetch(`${API_URL}/v1/convert/jobs/${jobId}`, { method: 'DELETE' })
+export async function cancelConvertJob(jobId: string, workspaceId?: string): Promise<void> {
+  const res = await apiFetch(`${convertBase(workspaceId)}/jobs/${jobId}`, {
+    method: 'DELETE',
+  })
   if (!res.ok) {
     const text = await res.text().catch(() => '')
     throw new Error(errDetail(text, t('api.errConvert', { status: res.status })))
@@ -125,6 +136,7 @@ export async function pollConvertJob(
     signal?: AbortSignal
     intervalMs?: number
     timeoutMs?: number
+    workspaceId?: string
     onUpdate?: (s: ConvertJobStatus) => void
   },
 ): Promise<ConvertResponse> {
@@ -133,7 +145,7 @@ export async function pollConvertJob(
   const started = Date.now()
   for (;;) {
     if (opts?.signal?.aborted) throw new Error(t('api.errConvertGeneric'))
-    const st = await getConvertJob(jobId, opts?.signal)
+    const st = await getConvertJob(jobId, opts?.signal, opts?.workspaceId)
     opts?.onUpdate?.(st)
     if (st.status === 'done') {
       if (!st.result) throw new Error(t('api.errConvertGeneric'))

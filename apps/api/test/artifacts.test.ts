@@ -80,6 +80,37 @@ describe('artifact store', () => {
     assert.deepEqual(await artifacts.listArtifacts(), []);
   });
 
+  test('never expires a persistent doc and records its owner', async () => {
+    const persistentId = 'c'.repeat(32);
+    const guestId = 'd'.repeat(32);
+    const past = '2000-01-01T00:00:00.000Z';
+
+    // Both carry a converter expiry in the past, but only the guest should expire.
+    await artifacts.putArtifact({
+      doc_id: persistentId,
+      markdown: '## Page 1\n',
+      expires_at: past,
+      owner_id: 'u:owner-1',
+      workspace_id: 'ws_1',
+    });
+    await artifacts.putArtifact({
+      doc_id: guestId,
+      markdown: '## Page 1\n',
+      expires_at: past,
+    });
+
+    const expired = await artifacts.listExpiredDocIds(
+      new Date('2100-01-01T00:00:00.000Z'),
+    );
+    assert.deepEqual(expired, [guestId]);
+
+    const listed = await artifacts.listArtifacts();
+    const persistent = listed.find((d) => d.doc_id === persistentId);
+    assert.equal(persistent?.expires_at, null);
+    assert.equal(persistent?.workspace_id, 'ws_1');
+    assert.equal(persistent?.owner_id, 'u:owner-1');
+  });
+
   test('reports disk full once usage reaches the cap', async () => {
     await writeFile(path.join(root, 'blob.bin'), Buffer.alloc(1024 * 1024));
     assert.equal(await artifacts.isArtifactDiskFull(), true);

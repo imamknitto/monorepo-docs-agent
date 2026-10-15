@@ -30,6 +30,16 @@ export type ConversionJob = {
 type Stored = { ok: true } | StoreFailure;
 
 /**
+ * Ownership context for a conversion. Set for workspace uploads so the
+ * artifact meta + Document row carry the owner and workspace; absent for
+ * guests (ownerId/workspaceId stay null → expiring doc).
+ */
+export type PersistContext = {
+  ownerId?: string | null;
+  workspaceId?: string | null;
+};
+
+/**
  * Write the artifact, then record and enqueue indexing.
  * Disk failures surface to the caller. Database and queue failures are logged
  * and do not fail the conversion response.
@@ -39,12 +49,18 @@ export async function persistConversion(input: {
   filename: string;
   requestId?: string;
   logPrefix: string;
+  ctx?: PersistContext;
 }): Promise<Stored> {
-  const { payload, filename, requestId, logPrefix } = input;
+  const { payload, filename, requestId, logPrefix, ctx } = input;
   if (!payload.doc_id) return { ok: true };
   try {
     if (!(await artifactExists(payload.doc_id))) {
-      await putArtifact({ ...payload, filename });
+      await putArtifact({
+        ...payload,
+        filename,
+        owner_id: ctx?.ownerId ?? null,
+        workspace_id: ctx?.workspaceId ?? null,
+      });
     }
   } catch (err) {
     if (err instanceof ArtifactDiskFullError) {
@@ -66,6 +82,7 @@ export async function persistConversion(input: {
     payload.markdown_url ?? null,
     payload.stats,
     requestId,
+    ctx,
   );
   return { ok: true };
 }
@@ -77,6 +94,7 @@ export async function enqueueIndexing(
   markdownUrl: string | null,
   stats: unknown,
   reqId?: string,
+  ctx?: PersistContext,
 ): Promise<void> {
   if (!DOC_ID_RE.test(docId)) {
     console.warn(
@@ -97,6 +115,8 @@ export async function enqueueIndexing(
       name,
       markdownUrl,
       stats: stats ?? {},
+      ownerId: ctx?.ownerId ?? null,
+      workspaceId: ctx?.workspaceId ?? null,
     });
     console.log(
       `[index:enqueue] doc=${docId} upsert=ok markdownUrl=${markdownUrl ?? "(null)"}`,
@@ -137,6 +157,7 @@ export type ConvertDocumentResult =
 export async function convertDocument(
   upload: ConvertUpload,
   requestId?: string,
+  ctx?: PersistContext,
 ): Promise<ConvertDocumentResult> {
   const started = Date.now();
   console.log(
@@ -183,6 +204,7 @@ export async function convertDocument(
       filename: upload.file.name,
       requestId,
       logPrefix: "[convert]",
+      ctx,
     });
     if (!stored.ok) {
       return {
@@ -240,6 +262,7 @@ export type ConversionJobResult =
 export async function getConversionJob(
   jobId: string,
   requestId?: string,
+  ctx?: PersistContext,
 ): Promise<ConversionJobResult> {
   let res: Response;
   try {
@@ -262,6 +285,7 @@ export async function getConversionJob(
       filename: job.filename ?? job.result.doc_id,
       requestId,
       logPrefix: "[convert:async]",
+      ctx,
     });
     if (!stored.ok) {
       return {

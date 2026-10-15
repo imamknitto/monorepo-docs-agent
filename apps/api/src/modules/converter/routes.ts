@@ -1,24 +1,39 @@
-import { Hono } from "hono";
+import { Hono, type Context } from "hono";
 import { bodyLimit } from "hono/body-limit";
-import { DOC_ID_RE, MAX_UPLOAD_BYTES } from "../../config.js";
+import { DOC_ID_RE, MAX_UPLOAD_BYTES, sessionUserId } from "../../config.js";
 import { stripImageBytes } from "../documents/artifacts.js";
+import { loadSession, type AuthVariables } from "../auth/middleware.js";
 import {
   cancelConversionJob,
   convertDocument,
   getConversionJob,
   startConversion,
+  type PersistContext,
 } from "./service.js";
 import { parseConvertForm } from "./utils.js";
 
-const converterRoutes = new Hono();
+type Ctx = Context<{ Variables: AuthVariables }>;
+
+const converterRoutes = new Hono<{ Variables: AuthVariables }>();
+
+converterRoutes.use("/*", loadSession);
 
 converterRoutes.use(
   "/convert*",
   bodyLimit({ maxSize: MAX_UPLOAD_BYTES + 1024 * 1024 }),
 );
 
-/** Sync conversion: returns result directly */
-converterRoutes.post("/convert", async (c) => {
+/** Owner identity from the session (never from the client). */
+function ownerFromSession(c: Ctx): string | null {
+  const user = c.get("user");
+  return user ? sessionUserId(user.id) : null;
+}
+
+/** Sync conversion: returns result directly. `ctx` carries workspace ownership. */
+export async function runSyncConvert(
+  c: Ctx,
+  ctx: PersistContext,
+): Promise<Response> {
   const requestId = c.get("requestId") as string | undefined;
   let form: FormData;
   try {
@@ -29,7 +44,7 @@ converterRoutes.post("/convert", async (c) => {
   const upload = parseConvertForm(form);
   if (!upload.ok) return c.json({ detail: upload.detail }, upload.status);
 
-  const result = await convertDocument(upload, requestId);
+  const result = await convertDocument(upload, requestId, ctx);
   if (result.type === "timeout") {
     return c.json(
       {
@@ -59,10 +74,10 @@ converterRoutes.post("/convert", async (c) => {
     return c.json({ detail: result.detail }, result.status);
   }
   return c.json(stripImageBytes(result.payload));
-});
+}
 
-/** Async conversion: returns 202 immediately, client polls GET /v1/convert/jobs/:jobId */
-converterRoutes.post("/convert/jobs", async (c) => {
+/** Async conversion: 202 immediately, client polls GET /v1/convert/jobs/:jobId. */
+export async function runAsyncConvert(c: Ctx): Promise<Response> {
   const requestId = c.get("requestId") as string | undefined;
   let form: FormData;
   try {
@@ -90,15 +105,24 @@ converterRoutes.post("/convert/jobs", async (c) => {
     return c.json({ detail: "Conversion failed upstream." }, 502);
   }
   return result.response;
-});
+}
 
-/** Get async job status */
+/** Sync conversion for guests and logged-in users (no workspace). */
+converterRoutes.post("/convert", (c) =>
+  runSyncConvert(c, { ownerId: ownerFromSession(c), workspaceId: null }),
+);
+
+/** Async conversion for guests and logged-in users (no workspace). */
+converterRoutes.post("/convert/jobs", (c) => runAsyncConvert(c));
+
+/** Get async job status. */
 converterRoutes.get("/convert/jobs/:jobId", async (c) => {
   const jobId = c.req.param("jobId");
   if (!DOC_ID_RE.test(jobId)) return c.json({ detail: "Invalid job id." }, 400);
   const result = await getConversionJob(
     jobId,
     c.get("requestId") as string | undefined,
+    { ownerId: ownerFromSession(c), workspaceId: null },
   );
   if (result.type === "not-found") {
     return c.json({ detail: "Job not found or expired." }, 404);

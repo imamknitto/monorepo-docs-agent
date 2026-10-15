@@ -1,7 +1,9 @@
-import { Hono } from "hono";
+import { Hono, type Context } from "hono";
 import { agentToClientStream } from "@anvia/client";
 import { createClientStreamResponse } from "@anvia/server";
 import { NotConfiguredError } from "@halodocs/agent";
+import { sessionUserId } from "../../config.js";
+import { loadSession, type AuthVariables } from "../auth/middleware.js";
 import { getDocStatus } from "../documents/store.js";
 import {
   clearHistory,
@@ -11,13 +13,24 @@ import {
 } from "./service.js";
 import { parseChatQuestion, readChatScope } from "./utils.js";
 
-const chatRoutes = new Hono();
+const chatRoutes = new Hono<{ Variables: AuthVariables }>();
+
+// Resolve the session once per request: a logged-in user's identity (`u:<id>`)
+// takes precedence over the guest fingerprint header.
+chatRoutes.use("/*", loadSession);
+
+/** Server-derived identity for chat memory, or null for guests. */
+function chatIdentity(c: Context<{ Variables: AuthVariables }>): string | null {
+  const user = c.get("user");
+  return user ? sessionUserId(user.id) : null;
+}
 
 chatRoutes.get("/chat/:docId/:sessionId", async (c) => {
   const scope = readChatScope(
     c.req.param("docId"),
     c.req.param("sessionId"),
     c.req.header("x-user-id"),
+    chatIdentity(c),
   );
   if (!scope.ok) return c.json({ detail: scope.detail }, scope.status);
   try {
@@ -36,6 +49,7 @@ chatRoutes.delete("/chat/:docId/:sessionId", async (c) => {
     c.req.param("docId"),
     c.req.param("sessionId"),
     c.req.header("x-user-id"),
+    chatIdentity(c),
   );
   if (!scope.ok) return c.json({ detail: scope.detail }, scope.status);
   try {
@@ -54,6 +68,7 @@ chatRoutes.post("/chat/:docId/:sessionId", async (c) => {
     c.req.param("docId"),
     c.req.param("sessionId"),
     c.req.header("x-user-id"),
+    chatIdentity(c),
   );
   if (!scope.ok) return c.json({ detail: scope.detail }, scope.status);
 

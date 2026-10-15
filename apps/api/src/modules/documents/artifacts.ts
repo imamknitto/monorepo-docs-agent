@@ -46,6 +46,8 @@ export type ArtifactPayload = {
   stats?: unknown;
   warnings?: unknown;
   expires_at?: string | null;
+  owner_id?: string | null;
+  workspace_id?: string | null;
   images?: ArtifactImage[];
 };
 
@@ -55,9 +57,23 @@ export type ArtifactMeta = {
   filename?: string;
   created_at?: string;
   expires_at?: string | null;
+  owner_id?: string | null;
+  workspace_id?: string | null;
   stats?: unknown;
   warnings?: unknown;
 };
+
+/**
+ * Persistent (login-owned) documents live in a workspace and never expire.
+ * Guests keep `workspace_id: null` and stay bound to `expires_at`.
+ * `meta.json` is the sweep's source of truth, so this invariant is enforced
+ * on write and re-checked on read (see `listExpiredDocIds`).
+ */
+export function isPersistentDoc(doc: {
+  workspace_id?: string | null;
+}): boolean {
+  return Boolean(doc.workspace_id);
+}
 
 export type StoredFile = {
   body: Buffer;
@@ -118,6 +134,7 @@ export async function putArtifact(doc: ArtifactPayload): Promise<void> {
   await mkdir(path.join(base, 'scans'), { recursive: true });
   await writeFile(path.join(base, MARKDOWN_FILENAME), doc.markdown, 'utf8');
 
+  const persistent = isPersistentDoc(doc);
   const meta: ArtifactMeta = {
     doc_id: doc.doc_id,
     filename: doc.filename ?? doc.doc_id,
@@ -125,7 +142,10 @@ export async function putArtifact(doc: ArtifactPayload): Promise<void> {
     stats: doc.stats ?? {},
     warnings: Array.isArray(doc.warnings) ? doc.warnings : [],
     created_at: new Date().toISOString(),
-    expires_at: doc.expires_at ?? null,
+    // Persistent docs never carry an expiry, even if the converter returned one.
+    expires_at: persistent ? null : (doc.expires_at ?? null),
+    owner_id: doc.owner_id ?? null,
+    workspace_id: doc.workspace_id ?? null,
   };
   await writeFile(path.join(base, 'meta.json'), JSON.stringify(meta), 'utf8');
 
@@ -158,6 +178,18 @@ export async function readMarkdown(docId: string): Promise<string | null> {
   if (!DOC_ID_RE.test(docId)) return null;
   const file = await readPublicFile(`${docId}/${MARKDOWN_FILENAME}`);
   return file ? file.body.toString('utf8') : null;
+}
+
+/** Read one doc's meta.json (ownership + expiry) without listing the whole dir. */
+export async function readArtifactMeta(docId: string): Promise<ArtifactMeta | null> {
+  if (!DOC_ID_RE.test(docId)) return null;
+  try {
+    const raw = await readFile(path.join(ARTIFACT_DIR, docId, 'meta.json'), 'utf8');
+    const meta = JSON.parse(raw) as ArtifactMeta;
+    return { ...meta, doc_id: docId };
+  } catch {
+    return null;
+  }
 }
 
 export async function listArtifacts(): Promise<ArtifactMeta[]> {
@@ -198,6 +230,9 @@ export async function listExpiredDocIds(now: Date = new Date()): Promise<string[
   const documents = await listArtifacts();
   return documents
     .filter((doc) => {
+      // Persistent (workspace-owned) docs are never swept, regardless of
+      // expires_at — defense-in-depth over the write-time invariant.
+      if (isPersistentDoc(doc)) return false;
       if (!doc.expires_at) return false;
       const expires = new Date(doc.expires_at).getTime();
       return Number.isFinite(expires) && expires <= now.getTime();

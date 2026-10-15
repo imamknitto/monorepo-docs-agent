@@ -12,18 +12,28 @@ export type ChatScope =
   | { ok: true; docId: string; sessionId: string; userId: string }
   | { ok: false; status: 400 | 404; detail: string };
 
-/** Path + fingerprint checks shared by chat session routes. */
+/**
+ * Path + identity checks shared by chat session routes.
+ *
+ * `authUserId` is the server-derived identity of a logged-in user (`u:<id>`,
+ * from the session — never trusted from the client). When present it wins over
+ * the `x-user-id` fingerprint header, which stays the guest fallback.
+ */
 export function readChatScope(
   docId: string,
   sessionId: string,
   userIdHeader: string | undefined,
+  authUserId?: string | null,
 ): ChatScope {
   if (!DOC_ID_RE.test(docId)) {
     return { ok: false, status: 404, detail: "Invalid doc_id." };
   }
   const sess = parseSessionId(docId, sessionId);
   if (!sess.ok) return { ok: false, status: 400, detail: sess.detail };
-  const userId = readUserId(userIdHeader);
+  const userId =
+    authUserId && USER_ID_RE.test(authUserId)
+      ? authUserId
+      : readUserId(userIdHeader);
   if (!userId) {
     return {
       ok: false,

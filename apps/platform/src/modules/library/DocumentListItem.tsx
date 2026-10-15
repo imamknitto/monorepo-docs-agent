@@ -12,17 +12,22 @@ export function DocumentListItem({
   doc,
   deleting,
   onDelete,
+  workspaceId,
 }: {
   doc: DocSummary
   deleting: boolean
   onDelete: (doc: DocSummary) => void
+  /** When set, the row links to the workspace-scoped doc page. */
+  workspaceId?: string
 }) {
   const { t } = useI18n()
+  const link = workspaceId
+    ? ({ to: '/w/$workspaceId/d/$docId', params: { workspaceId, docId: doc.doc_id } } as const)
+    : ({ to: '/r/$docId', params: { docId: doc.doc_id } } as const)
   return (
     <li className="group flex items-center">
       <Link
-        to="/r/$docId"
-        params={{ docId: doc.doc_id }}
+        {...link}
         className="min-w-0 flex-1 py-3.5 pr-4"
       >
         <span className="block truncate font-medium transition-colors group-hover:text-accent-text">

@@ -24,7 +24,14 @@ function loadMeta(docId: string): ConvertResponse | null {
   }
 }
 
-export function ResultPage({ docId }: { docId: string }) {
+export function ResultPage({
+  docId,
+  workspaceId,
+}: {
+  docId: string
+  /** When set, back/delete return to the workspace instead of the guest home. */
+  workspaceId?: string
+}) {
   const navigate = useNavigate()
   const confirm = useConfirm()
   const { t } = useI18n()
@@ -120,7 +127,14 @@ export function ResultPage({ docId }: { docId: string }) {
       } catch {
         /* storage blocked — nothing to clean up */
       }
-      void navigate({ to: '/' })
+      if (workspaceId) {
+        void navigate({
+          to: '/w/$workspaceId',
+          params: { workspaceId },
+        })
+      } else {
+        void navigate({ to: '/' })
+      }
     } catch (err) {
       setError(err instanceof Error ? err.message : t('result.errDelete'))
       setDeleting(false)
@@ -139,12 +153,22 @@ export function ResultPage({ docId }: { docId: string }) {
 
   return (
     <div className="flex min-h-0 flex-1 flex-col lg:overflow-hidden">
-      <Link
-        to="/"
-        className="inline-flex shrink-0 items-center gap-1.5 text-sm text-fg-soft transition-colors hover:text-fg"
-      >
-        <ArrowLeftIcon /> {t('result.back')}
-      </Link>
+      {workspaceId ? (
+        <Link
+          to="/w/$workspaceId"
+          params={{ workspaceId }}
+          className="inline-flex shrink-0 items-center gap-1.5 text-sm text-fg-soft transition-colors hover:text-fg"
+        >
+          <ArrowLeftIcon /> {t('ws.back')}
+        </Link>
+      ) : (
+        <Link
+          to="/"
+          className="inline-flex shrink-0 items-center gap-1.5 text-sm text-fg-soft transition-colors hover:text-fg"
+        >
+          <ArrowLeftIcon /> {t('result.back')}
+        </Link>
+      )}
 
       {/* Toolbar: static header row — the columns below scroll on their own */}
       <div className="mt-3 shrink-0 border-b border-line pb-3">

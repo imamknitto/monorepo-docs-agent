@@ -2,7 +2,8 @@ import { Hono } from "hono";
 import { cors } from "hono/cors";
 import { requestId } from "hono/request-id";
 import { serve } from "@hono/node-server";
-import { CONVERTER_URL } from "./config.js";
+import { CONVERTER_URL, PLATFORM_ORIGINS } from "./config.js";
+import { auth, isGoogleAuthEnabled } from "./modules/auth/auth.js";
 import {
   deleteArtifact,
   listExpiredDocIds,
@@ -11,6 +12,7 @@ import { rateLimit } from "./middleware/rateLimit.js";
 import { deleteDocCascade } from "./modules/documents/store.js";
 import { converterRoutes } from "./modules/converter/routes.js";
 import { documentsRoutes, publicRoutes } from "./modules/documents/routes.js";
+import { workspaceRoutes } from "./modules/workspaces/routes.js";
 import { healthRoutes } from "./modules/health/routes.js";
 import { debugRoutes } from "./modules/debug/routes.js";
 import { chatRoutes } from "./modules/chat/routes.js";
@@ -21,7 +23,10 @@ app.use("*", requestId());
 app.use(
   "*",
   cors({
-    origin: (process.env.PLATFORM_URL ?? "").split(","),
+    origin: PLATFORM_ORIGINS,
+    // Session cookie must be sent/accepted on cross-origin calls from the
+    // platform; requires an explicit origin (never "*") plus credentials.
+    credentials: true,
     allowHeaders: ["Content-Type", "Authorization", "x-user-id"],
     // Browser JS can only read safelisted response headers — the Anvia client
     // transport validates this one, so it must be visible to the platform.
@@ -30,10 +35,21 @@ app.use(
 );
 app.use("*", rateLimit);
 
+// Better Auth owns /api/auth/* (OAuth callbacks + session endpoints). Mounted
+// before /v1; guests never touch it.
+app.all("/api/auth/*", (c) => auth.handler(c.req.raw));
+
+// Which sign-in methods are available, so the platform can hide OAuth buttons
+// that have no credentials configured.
+app.get("/v1/auth/config", (c) =>
+  c.json({ emailPassword: true, google: isGoogleAuthEnabled }),
+);
+
 // API endpoints (converter proxy, documents, chat, debug) live under /v1.
 const v1 = new Hono();
 v1.route("/", converterRoutes);
 v1.route("/", documentsRoutes);
+v1.route("/", workspaceRoutes);
 v1.route("/", chatRoutes);
 v1.route("/", debugRoutes);
 
