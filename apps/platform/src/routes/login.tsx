@@ -178,7 +178,7 @@ function LoginPage() {
                 disabled={busy}
                 onClick={() => void onGoogle()}
               >
-                {t('auth.signIn')}
+                {t('auth.google')}
               </Button>
             </>
           )}

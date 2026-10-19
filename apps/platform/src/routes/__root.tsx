@@ -3,7 +3,7 @@ import { AuthControl } from '../components/AuthControl'
 import { ConfirmProvider } from '../components/ConfirmDialog'
 import { LangSwitch } from '../components/LangSwitch'
 import { ThemeToggle } from '../components/ThemeToggle'
-import { API_URL } from '../lib/api'
+import { useSession } from '../lib/auth'
 import { useI18n } from '../lib/i18n'
 
 export const Route = createRootRoute({
@@ -12,6 +12,8 @@ export const Route = createRootRoute({
 
 function RootLayout() {
   const { t } = useI18n()
+  // Expiry only applies to guest documents; signed-in documents are permanent.
+  const { data: session } = useSession()
   return (
     <ConfirmProvider>
       <div className="flex h-dvh flex-col overflow-hidden bg-bg text-fg">
@@ -34,17 +36,17 @@ function RootLayout() {
               </span>
               <span className="text-[15px] font-semibold tracking-tight">halodocs</span>
             </Link>
-            <div className="flex items-center gap-4">
-              <a
-                href={`${API_URL}/health`}
-                target="_blank"
-                rel="noreferrer"
-                className="label hover:text-fg"
+            <div className="flex items-center gap-3">
+              <div
+                role="group"
+                aria-label={t('common.preferences')}
+                className="flex items-center gap-0.5 rounded-md border border-line bg-surface p-0.5"
               >
-                {t('common.apiStatus')}
-              </a>
-              <LangSwitch />
-              <ThemeToggle />
+                <LangSwitch />
+                <span aria-hidden className="h-4 w-px bg-line" />
+                <ThemeToggle />
+              </div>
+              <span aria-hidden className="h-5 w-px bg-line" />
               <AuthControl />
             </div>
           </div>
@@ -52,11 +54,13 @@ function RootLayout() {
         <main id="main" className="mx-auto flex min-h-0 w-full max-w-[96rem] flex-1 flex-col overflow-y-auto px-5 py-10 sm:px-8">
           <Outlet />
         </main>
-        <footer className="shrink-0 border-t border-line">
-          <p className="label mx-auto max-w-[96rem] px-5 py-4 sm:px-8">
-            {t('common.footerExpiry')}
-          </p>
-        </footer>
+        {!session?.user && (
+          <footer className="shrink-0 border-t border-line">
+            <p className="label mx-auto max-w-[96rem] px-5 py-4 sm:px-8">
+              {t('common.footerExpiry')}
+            </p>
+          </footer>
+        )}
       </div>
     </ConfirmProvider>
   )

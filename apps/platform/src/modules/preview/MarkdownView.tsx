@@ -2,7 +2,7 @@ import { isValidElement, useState, type ReactNode } from 'react'
 import ReactMarkdown, { type Components } from 'react-markdown'
 import rehypeSanitize, { defaultSchema } from 'rehype-sanitize'
 import remarkGfm from 'remark-gfm'
-import { absoluteUrl } from '../../lib/api'
+import { absoluteUrl, mediaUrl } from '../../lib/api'
 import { useI18n } from '../../lib/i18n'
 
 // Keep `language-*` classes from fenced blocks so the block header
@@ -41,7 +41,11 @@ function textOf(node: ReactNode): string {
 const ImageRenderer: Components['img'] = ({ src, alt }) => (
   <figure>
     {/* eslint-disable-next-line jsx-a11y/alt-text */}
-    <img src={src} alt={alt ?? ''} loading="lazy" />
+    <img
+      src={typeof src === 'string' ? mediaUrl(src) : src}
+      alt={alt ?? ''}
+      loading="lazy"
+    />
     {alt && <figcaption>{alt}</figcaption>}
   </figure>
 )

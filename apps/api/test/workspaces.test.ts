@@ -20,6 +20,7 @@ const ownerB = `u:testB${suffix}`;
 const docA = '1'.repeat(31) + 'a';
 const docB = '2'.repeat(31) + 'b';
 const docC = '3'.repeat(31) + 'c';
+const docD = '4'.repeat(31) + 'd';
 
 describe('workspace names', () => {
   test('trims, rejects empty and over-long names', () => {
@@ -36,13 +37,13 @@ describe('workspace names', () => {
 describe('workspace isolation & cascade delete', () => {
   before(async () => {
     await prisma.document.deleteMany({
-      where: { id: { in: [docA, docB, docC] } },
+      where: { id: { in: [docA, docB, docC, docD] } },
     });
   });
 
   after(async () => {
     await prisma.document.deleteMany({
-      where: { id: { in: [docA, docB, docC] } },
+      where: { id: { in: [docA, docB, docC, docD] } },
     });
     await prisma.workspace.deleteMany({
       where: { ownerId: { in: [ownerA, ownerB] } },
@@ -79,6 +80,25 @@ describe('workspace isolation & cascade delete', () => {
     assert.deepEqual(
       ownerDocs.map((d) => d.doc_id),
       [docA],
+    );
+  });
+
+  test('landing listing excludes workspace documents', async () => {
+    await prisma.document.create({
+      data: { id: docD, name: 'd.pdf', ownerId: ownerA, workspaceId: null },
+    });
+
+    const landing = await ws.getOwnerLandingDocuments(ownerA);
+    assert.deepEqual(
+      landing.map((d) => d.doc_id),
+      [docD],
+    );
+
+    // The dashboard-wide listing still includes both.
+    const all = await ws.getOwnerDocuments(ownerA);
+    assert.deepEqual(
+      all.map((d) => d.doc_id).sort(),
+      [docA, docD].sort(),
     );
   });
 

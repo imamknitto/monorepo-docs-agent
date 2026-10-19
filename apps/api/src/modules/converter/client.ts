@@ -3,6 +3,7 @@ import {
   CONVERTER_URL,
   CONVERTER_API_KEY,
   CONVERT_TIMEOUT_MS,
+  ATTACH_OCR_TIMEOUT_MS,
   DOC_ID_RE,
 } from "../../config.js";
 
@@ -10,6 +11,17 @@ const dispatcher = new Agent({
   connectTimeout: 10_000,
   headersTimeout: CONVERT_TIMEOUT_MS,
   bodyTimeout: CONVERT_TIMEOUT_MS,
+});
+
+/**
+ * Image OCR is a seconds-per-image round-trip; reusing the conversion
+ * dispatcher (10-minute headers/body timeouts) would let a wedged OCR call
+ * hang a chat turn for minutes (BRD §6.7).
+ */
+const ocrDispatcher = new Agent({
+  connectTimeout: 10_000,
+  headersTimeout: ATTACH_OCR_TIMEOUT_MS,
+  bodyTimeout: ATTACH_OCR_TIMEOUT_MS,
 });
 
 function makeHeaders(requestId?: string): Record<string, string> {
@@ -55,8 +67,9 @@ function toStandardResponse(undiciRes: UndiciResponse): Response {
 async function fetchWithDispatcher(
   url: string,
   init: Record<string, unknown> = {},
+  agent: Agent = dispatcher,
 ): Promise<UndiciResponse> {
-  return undiciFetch(url, { ...init, dispatcher }) as Promise<UndiciResponse>;
+  return undiciFetch(url, { ...init, dispatcher: agent }) as Promise<UndiciResponse>;
 }
 
 export interface ConverterClient {
@@ -67,6 +80,12 @@ export interface ConverterClient {
     requestId?: string,
   ): Promise<Response>;
   convertAsync(
+    form: FormData,
+    signal?: AbortSignal,
+    requestId?: string,
+  ): Promise<Response>;
+  /** Standalone image OCR (`POST /v1/ocr`), short timeout, own dispatcher. */
+  ocrImage(
     form: FormData,
     signal?: AbortSignal,
     requestId?: string,
@@ -108,6 +127,20 @@ export const converterClient: ConverterClient = {
       body: toUndiciForm(form),
       signal: signal ?? AbortSignal.timeout(CONVERT_TIMEOUT_MS),
     });
+    return toStandardResponse(res);
+  },
+
+  async ocrImage(form, signal, requestId) {
+    const res = await fetchWithDispatcher(
+      `${CONVERTER_URL}/v1/ocr`,
+      {
+        method: "POST",
+        headers: makeHeaders(requestId),
+        body: toUndiciForm(form),
+        signal: signal ?? AbortSignal.timeout(ATTACH_OCR_TIMEOUT_MS),
+      },
+      ocrDispatcher,
+    );
     return toStandardResponse(res);
   },
 

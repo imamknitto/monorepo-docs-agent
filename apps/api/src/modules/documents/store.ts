@@ -64,4 +64,14 @@ export async function deleteDocCascade(docId: string): Promise<void> {
   await prisma.agentMemorySession.deleteMany({
     where: { sessionId: { startsWith: `doc:${docId}:` } },
   })
+  // Chats hosted on this document are gone, so are their mention chips. Chips
+  // in *other* documents' chats are kept on purpose — they render as "deleted".
+  await prisma.chatMessageMention.deleteMany({
+    where: { sessionId: { startsWith: `doc:${docId}:` } },
+  })
+  // Attachments live in one chat session, so document deletion drops their
+  // rows for that document's sessions too (workspace delete fans out here).
+  await prisma.chatAttachment.deleteMany({
+    where: { sessionId: { startsWith: `doc:${docId}:` } },
+  })
 }

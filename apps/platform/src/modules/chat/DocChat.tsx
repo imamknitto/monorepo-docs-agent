@@ -11,12 +11,22 @@ import {
   type ClientStreamEvent,
   type ClientStreamRequest,
 } from '@anvia/client'
-import { ChatProvider, Composer, Message, Thread } from '@anvia/react-ui'
+import {
+  ChatProvider,
+  Composer,
+  Message,
+  Thread,
+  useComposer,
+  type ComposerTriggerDefinition,
+  type ComposerTriggerItem,
+  type ComposerTriggerState,
+} from '@anvia/react-ui'
 import '@anvia/react-ui/styles.css'
 import { API_URL } from '../../lib/api'
+import { useSession } from '../../lib/auth'
 import { useI18n } from '../../lib/i18n'
 import { fpHeader } from '../../lib/identity'
-import { SendIcon } from '../../components/icons'
+import { SendIcon, PlusIcon } from '../../components/icons'
 import { Spinner } from '../../components/ui/Spinner'
 import { Alert } from '../../components/ui/Alert'
 import {
@@ -25,8 +35,65 @@ import {
   lastUserText,
   SUGGESTION_KEYS,
 } from './protocol'
-import { MessagePart, CopyMessage } from './message'
+import {
+  MAX_ATTACHMENTS_PER_MESSAGE,
+  MAX_MENTIONS_PER_MESSAGE,
+  fetchMentionableDocuments,
+  type MentionableDocument,
+} from './api'
+import {
+  AttachmentDropzone,
+  AttachmentTray,
+  useAttachmentTray,
+} from './attachments'
+import { MessagePart, CopyMessage, MessageMentions, MessageAttachments } from './message'
 import { ScrollToBottom } from './ScrollToBottom'
+
+/** Entity payload attached by the `@` trigger. */
+type MentionEntityData = {
+  docId?: string
+  documentName?: string
+  workspaceId?: string
+  workspaceName?: string
+}
+
+function mentionData(item: ComposerTriggerItem): MentionEntityData {
+  return (item.data ?? {}) as MentionEntityData
+}
+
+/**
+ * The composer sits at the bottom of the chat panel, so a downward popover
+ * falls off-screen. Anchor it above the caret instead and keep it inside the
+ * viewport horizontally.
+ */
+function MentionMenu({
+  children,
+}: {
+  children: (trigger: ComposerTriggerState) => React.ReactNode
+}) {
+  const composer = useComposer()
+  const rect = composer.activeTrigger?.rect
+  if (!rect) return null
+  const spaceAbove = rect.top
+  const spaceBelow = window.innerHeight - rect.bottom
+  const openUp = spaceBelow < 260 && spaceAbove > spaceBelow
+  const left = Math.max(8, Math.min(rect.left, window.innerWidth - 360))
+
+  return (
+    <Composer.TriggerMenu
+      className="z-50 overflow-hidden rounded-lg border border-line bg-surface shadow-xl shadow-black/20"
+      style={{
+        left,
+        width: Math.min(352, window.innerWidth - left - 12),
+        ...(openUp
+          ? { top: 'auto', bottom: window.innerHeight - rect.top + 6 }
+          : { top: rect.bottom + 6 }),
+      }}
+    >
+      {children}
+    </Composer.TriggerMenu>
+  )
+}
 
 /**
  * Headless chat bound to one backend session (remount per session via key).
@@ -35,23 +102,76 @@ import { ScrollToBottom } from './ScrollToBottom'
  */
 export function DocChat({
   docId,
+  workspaceId,
   sessionId,
   initialHistory,
   indexing,
   gone,
+  signedIn = false,
 }: {
   docId: string
+  /** When set, `@` mentions are available (workspace documents only). */
+  workspaceId?: string
   sessionId: string
   initialHistory: UIMessage[]
   indexing: boolean
   gone: boolean
+  /** Signed-in documents never expire — "gone" then means deleted. */
+  signedIn?: boolean
 }) {
   const [input, setInput] = useState('')
   const [streamError, setStreamError] = useState<string | null>(null)
   const { t } = useI18n()
+  const { data: session } = useSession()
 
   // Partial tool-call input per part (tool input can arrive in deltas).
   const toolInputsRef = useRef(new Map<string, string>())
+  // Mentions for the request currently being sent (read by the transport).
+  const mentionsRef = useRef<string[]>([])
+  // Ready attachment ids for the request currently being sent.
+  const attachmentsRef = useRef<string[]>([])
+
+  // Mentions are an account feature and only reference workspace documents.
+  const canMention = Boolean(session?.user) && Boolean(workspaceId)
+  // Attachments are an account feature too (guests get HTTP 403 server-side).
+  const canAttach = Boolean(session?.user)
+  const tray = useAttachmentTray(docId, sessionId)
+  const fileInputRef = useRef<HTMLInputElement>(null)
+
+  const triggers = useMemo<ComposerTriggerDefinition[]>(() => {
+    if (!canMention) return []
+    return [
+      {
+        id: 'documents',
+        char: '@',
+        items: async ({ query, entities, signal }) => {
+          const already = new Set(
+            entities
+              .map((e) => (e.data as MentionEntityData | undefined)?.docId)
+              .filter((id): id is string => Boolean(id)),
+          )
+          const remaining = MAX_MENTIONS_PER_MESSAGE - already.size
+          if (remaining <= 0) return []
+          const docs = await fetchMentionableDocuments(query, docId, signal)
+          return docs
+            .filter((d: MentionableDocument) => !already.has(d.doc_id))
+            .slice(0, remaining)
+            .map<ComposerTriggerItem>((d) => ({
+              id: d.doc_id,
+              label: d.filename,
+              text: `@${d.filename}`,
+              detail: d.workspace_name,
+              data: {
+                docId: d.doc_id,
+                documentName: d.filename,
+                workspaceId: d.workspace_id,
+                workspaceName: d.workspace_name,
+              },
+            }))
+        },
+      },
+    ]
+  }, [canMention, docId])
 
   const transport = useMemo<
     EventTransport<ClientStreamRequest, ClientStreamEvent<ClientMetadata>>
@@ -59,8 +179,19 @@ export function DocChat({
     const client = createHttpClientTransport({
       endpoint: `${API_URL}/v1/chat/${docId}/${sessionId}`,
       format: 'jsonl',
-      headers: () => ({ 'content-type': 'application/json', ...fpHeader() }),
+      headers: () => ({
+        'content-type': 'application/json',
+        ...fpHeader(),
+        ...(mentionsRef.current.length > 0
+          ? { 'x-chat-mentions': mentionsRef.current.join(',') }
+          : {}),
+        ...(attachmentsRef.current.length > 0
+          ? { 'x-chat-attachments': attachmentsRef.current.join(',') }
+          : {}),
+      }),
       body: ({ request }) => JSON.stringify(request),
+      // Session cookie: the server scopes memory to `u:<id>` when logged in.
+      init: { credentials: 'include' },
     })
     // useChat speaks positional send() and maps each yielded event via
     // eventToUIEvent, so unwrap the stream envelopes here (no resume in use).
@@ -137,7 +268,7 @@ export function DocChat({
           >
             <Thread.Empty className="py-6 text-sm text-fg-soft">
               {gone ? (
-                t('chat.goneEmpty')
+                t(signedIn ? 'chat.deletedEmpty' : 'chat.goneEmpty')
               ) : indexing ? (
                 t('chat.indexingEmpty')
               ) : (
@@ -184,6 +315,12 @@ export function DocChat({
                       </p>
                       {message.role !== 'user' && <CopyMessage />}
                     </div>
+                    {message.role === 'user' && (
+                      <>
+                        <MessageMentions />
+                        <MessageAttachments />
+                      </>
+                    )}
                     <Message.Content>
                       <Message.Parts>
                         {() => (
@@ -224,36 +361,167 @@ export function DocChat({
 
         {unavailable ? (
           <p className="shrink-0 rounded-md border border-line bg-surface-2 px-3 py-2 text-sm text-fg-soft">
-            {gone ? t('chat.docGone') : t('chat.waitingIndex')}
+            {gone
+              ? t(signedIn ? 'chat.docDeleted' : 'chat.docGone')
+              : t('chat.waitingIndex')}
           </p>
         ) : (
-          <Composer.Root
-            className="flex shrink-0 items-end gap-2"
-            input={input}
-            onInputChange={setInput}
-            submitMessage={async ({ input: text, chat: controller, clear }) => {
-              beginTurn()
-              clear()
-              await controller.sendMessage(text)
-            }}
-          >
-            <Composer.TextareaInput
-              minRows={2}
-              maxRows={6}
+          <>
+            {canAttach && (
+              <AttachmentTray
+                items={tray.items}
+                notice={tray.notice}
+                onDismissNotice={() => tray.setNotice(null)}
+                onRemove={tray.remove}
+              />
+            )}
+            <AttachmentDropzone
+              enabled={canAttach}
+              onFiles={tray.addFiles}
+            >
+              <Composer.Root
+                className="flex shrink-0 items-end gap-2"
+                input={input}
+                onInputChange={setInput}
+                triggers={triggers}
+                submitMessage={async ({
+                  input: text,
+                  chat: controller,
+                  entities,
+                  clear,
+                }) => {
+                  beginTurn()
+                  // Hard guard: a submit racing a still-processing chip must
+                  // never send stale ids (the server would 403/ignore them).
+                  if (tray.busy) return
+                  mentionsRef.current = entities
+                    .filter((e) => e.triggerId === 'documents')
+                    .map((e) => (e.data as MentionEntityData | undefined)?.docId)
+                    .filter((id): id is string => Boolean(id))
+                  attachmentsRef.current = tray.readyIds
+                  clear()
+                  try {
+                    await controller.sendMessage(text)
+                  } finally {
+                    mentionsRef.current = []
+                    attachmentsRef.current = []
+                    tray.clearSent()
+                  }
+                }}
+              >
+                {canAttach && (
+                  <>
+                    <input
+                      ref={fileInputRef}
+                      type="file"
+                      multiple
+                      accept=".pdf,.png,.jpg,.jpeg,.webp,.txt,.md,.markdown"
+                      className="hidden"
+                      onChange={(e) => {
+                        tray.addFiles(Array.from(e.target.files ?? []))
+                        e.currentTarget.value = ''
+                      }}
+                    />
+                    <button
+                      type="button"
+                      aria-label={t('chat.attachAdd')}
+                      title={t('chat.attachAdd')}
+                      onClick={() => fileInputRef.current?.click()}
+                      disabled={
+                        tray.items.length >= MAX_ATTACHMENTS_PER_MESSAGE ||
+                        tray.busy
+                      }
+                      className="shrink-0 rounded-md border border-line-strong px-3 py-2 text-sm text-fg-soft transition-colors hover:bg-surface-2 hover:text-fg disabled:opacity-40"
+                    >
+                      <PlusIcon />
+                    </button>
+                  </>
+                )}
+            {canMention && (
+              <MentionMenu>
+                {(trigger) => {
+                  if (trigger.loading) {
+                    return (
+                      <p className="px-3 py-2 text-sm text-fg-soft">
+                        {t('chat.mentionSearching')}
+                      </p>
+                    )
+                  }
+                  if (trigger.items.length === 0) {
+                    return (
+                      <p className="px-3 py-2 text-sm text-fg-soft">
+                        {t('chat.mentionEmpty')}
+                      </p>
+                    )
+                  }
+                  const groups = new Map<string, ComposerTriggerItem[]>()
+                  for (const item of trigger.items) {
+                    const group = mentionData(item).workspaceName || ''
+                    const list = groups.get(group) ?? []
+                    list.push(item)
+                    groups.set(group, list)
+                  }
+                  return (
+                    <div className="max-h-72 overflow-y-auto p-1">
+                      {[...groups.entries()].map(([workspace, items]) => (
+                        <div key={workspace || 'none'} className="py-1">
+                          <p className="label px-2 pb-1 pt-1">
+                            {workspace || t('chat.mentionNoWorkspace')}
+                          </p>
+                          {items.map((item) => (
+                            <Composer.TriggerItem
+                              key={item.id}
+                              item={item}
+                              index={trigger.items.indexOf(item)}
+                              className="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-sm transition-colors data-[active=true]:bg-surface-2 hover:bg-surface-2"
+                            >
+                              <span className="min-w-0 flex-1">
+                                <span className="block truncate font-medium">
+                                  {item.label}
+                                </span>
+                                <span className="block truncate font-mono text-[11px] text-fg-soft">
+                                  {mentionData(item).workspaceName}
+                                </span>
+                              </span>
+                            </Composer.TriggerItem>
+                          ))}
+                        </div>
+                      ))}
+                    </div>
+                  )
+                }}
+              </MentionMenu>
+            )}
+            <Composer.Input
+              minRows={3}
+              maxRows={10}
               autoResize
-              placeholder={t('chat.placeholder')}
-              className="min-w-0 flex-1 resize-none rounded-md border border-line-strong bg-bg px-3 py-2 text-sm placeholder:text-fg-faint"
+              placeholder={
+                canMention ? t('chat.placeholderMention') : t('chat.placeholder')
+              }
+              className="min-w-0 flex-1 rounded-md border border-line-strong bg-bg px-3 py-2 text-sm transition-colors focus-within:border-fg-faint"
             />
             {chat.status === 'streaming' ? (
               <Composer.Stop className="rounded-md border border-line-strong px-4 py-2 text-sm font-medium transition-colors hover:bg-surface-2">
                 {t('chat.stop')}
               </Composer.Stop>
+            ) : tray.busy ? (
+              <button
+                type="button"
+                disabled
+                className="flex shrink-0 items-center gap-1.5 rounded-md bg-accent px-4 py-2 text-sm font-semibold text-accent-ink opacity-40"
+                title={t('chat.attachWait')}
+              >
+                {t('chat.send')} <SendIcon />
+              </button>
             ) : (
               <Composer.Submit className="flex items-center gap-1.5 rounded-md bg-accent px-4 py-2 text-sm font-semibold text-accent-ink transition-opacity hover:opacity-90 disabled:opacity-40">
                 {t('chat.send')} <SendIcon />
               </Composer.Submit>
             )}
-          </Composer.Root>
+            </Composer.Root>
+          </AttachmentDropzone>
+          </>
         )}
       </div>
     </ChatProvider>

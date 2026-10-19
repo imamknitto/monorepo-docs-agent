@@ -2,16 +2,26 @@ import { Hono, type Context } from "hono";
 import { agentToClientStream } from "@anvia/client";
 import { createClientStreamResponse } from "@anvia/server";
 import { NotConfiguredError } from "@halodocs/agent";
-import { sessionUserId } from "../../config.js";
+import { ATTACHMENTS_HEADER, MENTIONS_HEADER, sessionUserId } from "../../config.js";
 import { loadSession, type AuthVariables } from "../auth/middleware.js";
 import { getDocStatus } from "../documents/store.js";
+import type { MentionSnapshot } from "./history-store.js";
 import {
   clearHistory,
+  getDocumentName,
   loadUiHistory,
+  resolveMentions,
   streamAgentAnswer,
   toClientError,
 } from "./service.js";
-import { parseChatQuestion, readChatScope } from "./utils.js";
+import { resolveReadyAttachments } from "./attachments/service.js";
+import type { ReadyAttachment } from "./attachments/service.js";
+import {
+  parseAttachmentHeader,
+  parseChatQuestion,
+  parseMentionHeader,
+  readChatScope,
+} from "./utils.js";
 
 const chatRoutes = new Hono<{ Variables: AuthVariables }>();
 
@@ -75,6 +85,45 @@ chatRoutes.post("/chat/:docId/:sessionId", async (c) => {
   const parsed = parseChatQuestion(await c.req.json().catch(() => null));
   if (!parsed.ok) return c.json({ detail: parsed.detail }, parsed.status);
 
+  const identity = chatIdentity(c);
+  const parsedMentions = parseMentionHeader(
+    c.req.header(MENTIONS_HEADER),
+    scope.docId,
+    identity === null,
+  );
+  if (!parsedMentions.ok) {
+    return c.json({ detail: parsedMentions.detail }, parsedMentions.status);
+  }
+  let mentions: MentionSnapshot[] = [];
+  if (parsedMentions.docIds.length > 0) {
+    // parseMentionHeader already rejects guests, so identity is non-null here.
+    const resolved = await resolveMentions(identity as string, parsedMentions.docIds);
+    if (!resolved.ok) {
+      return c.json({ detail: resolved.detail }, resolved.status);
+    }
+    mentions = resolved.mentions;
+  }
+
+  const parsedAttachments = parseAttachmentHeader(
+    c.req.header(ATTACHMENTS_HEADER),
+    identity === null,
+  );
+  if (!parsedAttachments.ok) {
+    return c.json({ detail: parsedAttachments.detail }, parsedAttachments.status);
+  }
+  let attachments: ReadyAttachment[] = [];
+  if (parsedAttachments.attachmentIds.length > 0) {
+    const resolved = await resolveReadyAttachments(
+      identity as string,
+      scope.sessionId,
+      parsedAttachments.attachmentIds,
+    );
+    if (!resolved.ok) {
+      return c.json({ detail: resolved.detail }, resolved.status);
+    }
+    attachments = resolved.attachments;
+  }
+
   const status = await getDocStatus(scope.docId);
   if (!status.found || !status.isProcessed) {
     return c.json(
@@ -82,6 +131,8 @@ chatRoutes.post("/chat/:docId/:sessionId", async (c) => {
       503,
     );
   }
+
+  const activeDocumentName = await getDocumentName(scope.docId);
 
   return createClientStreamResponse({
     events: agentToClientStream({
@@ -91,6 +142,9 @@ chatRoutes.post("/chat/:docId/:sessionId", async (c) => {
         scope.userId,
         parsed.question,
         status.summary,
+        mentions,
+        activeDocumentName,
+        attachments,
       ),
       mapError: (error) => {
         console.error(

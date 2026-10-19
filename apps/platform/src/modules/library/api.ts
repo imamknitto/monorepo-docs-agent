@@ -19,8 +19,16 @@ export interface DocSummary {
   workspace_id?: string | null
 }
 
-export async function listDocuments(): Promise<DocSummary[]> {
-  const res = await apiFetch('/v1/documents')
+/**
+ * List documents. `landing` scopes the request to the anonymous landing
+ * library (workspace docs excluded); omit it for the full owner listing.
+ */
+export async function listDocuments(
+  scope?: 'landing',
+): Promise<DocSummary[]> {
+  const res = await apiFetch(
+    scope ? `/v1/documents?scope=${scope}` : '/v1/documents',
+  )
   if (!res.ok) throw new Error(t('api.errDocs', { status: res.status }))
   const body = (await res.json()) as { documents: DocSummary[] }
   return body.documents ?? []

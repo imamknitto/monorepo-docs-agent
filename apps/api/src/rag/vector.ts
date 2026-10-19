@@ -1,6 +1,6 @@
 import type { EmbeddingModel } from "@anvia/core/embeddings";
 import { embedDocuments } from "@anvia/core/embeddings";
-import { retrieveDocuments, vectorFilter } from "@anvia/core/vector-store";
+import { vectorFilter } from "@anvia/core/vector-store";
 import { QdrantVectorClient } from "@anvia/qdrant";
 import { loadTransformersEmbeddingModel } from "@anvia/transformers";
 import {
@@ -131,24 +131,37 @@ export async function deleteDocVectors(
   }
 }
 
-/** Vector retrieval scoped to one document. Null when embeddings are unavailable. */
-export async function retrieveForDoc(
-  docId: string,
+/**
+ * Vector retrieval across several documents, one query per document.
+ *
+ * `vectorFilter` has no `in` operator, so multi-document search is N filtered
+ * queries rather than one. The query is embedded once and reused. Null when
+ * embeddings are unavailable (caller falls back to keyword retrieval).
+ */
+export async function retrieveForDocs(
+  docs: Array<{ docId: string; documentName: string; topK: number }>,
   question: string,
-  topK = 4,
 ): Promise<RetrievedPage[] | null> {
+  if (docs.length === 0) return [];
   const model = await getEmbeddingModel();
   if (!model) return null;
+  const [embedded] = await model.embedTexts([question]);
+  if (!embedded) return null;
   const store = getVectorStore();
-  const results = await retrieveDocuments<RetrievedPage, PageMetadata>({
-    store,
-    model,
-    query: question,
-    topK,
-    filter: vectorFilter.eq("documentId", docId),
-  });
-  return results.map((r) => ({
-    pageNumber: r.metadata?.pageNumber ?? r.document.pageNumber ?? 0,
-    content: r.document.content,
-  }));
+  const perDoc = await Promise.all(
+    docs.map(async (doc) => {
+      const results = await store.search({
+        vector: embedded.vector,
+        topK: doc.topK,
+        filter: vectorFilter.eq("documentId", doc.docId),
+      });
+      return results.map((r) => ({
+        pageNumber: r.metadata?.pageNumber ?? 0,
+        content: r.document.content,
+        docId: doc.docId,
+        documentName: doc.documentName,
+      }));
+    }),
+  );
+  return perDoc.flat();
 }

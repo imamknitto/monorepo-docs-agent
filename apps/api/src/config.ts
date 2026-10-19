@@ -47,6 +47,42 @@ export const CONVERT_TIMEOUT_MS = Number(env("CONVERT_TIMEOUT_MS", "600000"));
 export const DOC_ID_RE = /^[0-9a-f]{32}$/;
 
 /**
+ * Cross-workspace mentions travel outside the Anvia envelope (header, not
+ * body) so `parseClientStreamRequest` keeps its contract. BRD §6.5/§9.
+ */
+export const MENTIONS_HEADER = "x-chat-mentions";
+/** Max documents a single message may reference (BRD §9). */
+export const MAX_MENTIONS_PER_MESSAGE = Number(
+  env("MAX_MENTIONS_PER_MESSAGE", "3"),
+);
+/**
+ * Chat attachments ride the same outside-the-envelope channel (BRD §6.5):
+ * ids of already-processed attachments join the message via this header.
+ */
+export const ATTACHMENTS_HEADER = "x-chat-attachments";
+export const MAX_ATTACHMENTS_PER_MESSAGE = Number(
+  env("MAX_ATTACHMENTS_PER_MESSAGE", "5"),
+);
+/** Per-file upload cap for chat attachments (BRD §9: 5 MB). */
+export const ATTACH_MAX_MB = Number(env("ATTACH_MAX_MB", "5"));
+export const ATTACH_MAX_BYTES = ATTACH_MAX_MB * 1024 * 1024;
+/** Image-OCR upstream round-trip — seconds per image, unlike PDF conversion. */
+export const ATTACH_OCR_TIMEOUT_MS = Number(
+  env("ATTACH_OCR_TIMEOUT_MS", "120000"),
+);
+/** Per-attachment prompt budget in chars; longer content is cut. */
+export const ATTACH_MAX_CHARS = Number(env("ATTACH_MAX_CHARS", "50000"));
+/** `processing` rows older than this report failed on the next poll. */
+export const ATTACH_STALE_MS = Number(env("ATTACH_STALE_MS", "900000"));
+/** Retrieved pages per document: the active doc gets more room than mentions. */
+export const RETRIEVAL_TOP_K_ACTIVE = Number(env("RETRIEVAL_TOP_K_ACTIVE", "4"));
+export const RETRIEVAL_TOP_K_MENTION = Number(
+  env("RETRIEVAL_TOP_K_MENTION", "3"),
+);
+/** Hard cap on retrieved pages across the active doc + all mentions. */
+export const RETRIEVAL_PAGE_BUDGET = Number(env("RETRIEVAL_PAGE_BUDGET", "10"));
+
+/**
  * Memory identity string, namespaced by auth kind:
  * - `fp:<stable id>`  guest browser fingerprint (platform lib/identity.ts)
  * - `u:<userId>`      logged-in Better Auth user

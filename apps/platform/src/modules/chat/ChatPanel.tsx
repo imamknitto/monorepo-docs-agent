@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import { Link } from '@tanstack/react-router'
 import type { UIMessage } from '@anvia/react'
 import { API_URL } from '../../lib/api'
+import { useSession } from '../../lib/auth'
 import { useI18n } from '../../lib/i18n'
 import { getOrCreateFpId, resetFpId } from '../../lib/identity'
 import { Alert } from '../../components/ui/Alert'
@@ -13,9 +14,12 @@ import { DocChat } from './DocChat'
 
 export function ChatPanel({
   docId,
+  workspaceId,
   className = '',
 }: {
   docId: string
+  /** Enables `@` mentions (workspace documents only). */
+  workspaceId?: string
   className?: string
 }) {
   const [status, setStatus] = useState<DocStatus | null>(null)
@@ -29,6 +33,9 @@ export function ChatPanel({
   const [debugLoading, setDebugLoading] = useState(false)
   const confirm = useConfirm()
   const { t } = useI18n()
+  // Signed-in documents never expire, so "gone" only ever means deleted.
+  const { data: session } = useSession()
+  const signedIn = Boolean(session?.user)
 
   async function checkDebug() {
     setDebugLoading(true)
@@ -164,7 +171,9 @@ export function ChatPanel({
           {status === null
             ? t('chat.checking')
             : gone
-              ? t('chat.expired')
+              ? signedIn
+                ? t('chat.deleted')
+                : t('chat.expired')
               : indexing
                 ? t('chat.indexing')
                 : t('chat.indexed', { pages: status.pages })}
@@ -214,7 +223,7 @@ export function ChatPanel({
             role="alert"
             className="shrink-0 border-l-2 border-warn bg-warn/10 px-3 py-2 text-sm"
           >
-            {t('chat.goneNote')}{' '}
+            {signedIn ? t('chat.deletedNote') : t('chat.goneNote')}{' '}
             <Link to="/" className="underline underline-offset-2">
               {t('common.convertAnother')}
             </Link>
@@ -229,10 +238,12 @@ export function ChatPanel({
           <DocChat
             key={active}
             docId={docId}
+            workspaceId={workspaceId}
             sessionId={active}
             initialHistory={history}
             indexing={indexing}
             gone={gone}
+            signedIn={signedIn}
           />
         ) : (
           <p className="flex-1 py-6 text-center text-sm text-fg-soft">

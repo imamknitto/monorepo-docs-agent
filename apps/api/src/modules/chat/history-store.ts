@@ -6,6 +6,8 @@ import type {
   Message,
 } from "@anvia/core";
 import type { PrismaMemoryStore } from "@anvia/memory-prisma";
+import { prisma } from "../../utils/prisma.js";
+import { linkAttachmentsToRun } from "./attachments/service.js";
 
 const QUESTION_RE = /<question>([\s\S]*?)<\/question>/;
 
@@ -62,6 +64,13 @@ function takeLastTurns(messages: Message[], maxTurns: number): Message[] {
   return messages.slice(start);
 }
 
+/** One document the user referenced with `@` for a single turn. */
+export interface MentionSnapshot {
+  docId: string;
+  workspaceId: string | null;
+  documentName: string;
+}
+
 /**
  * Lean-history decorator over the Prisma store:
  * - (A) persists + replays only the question, never the retrieved page context
@@ -70,11 +79,17 @@ function takeLastTurns(messages: Message[], maxTurns: number): Message[] {
  *   system instructions anchors older context.
  * UI history stays complete (loadHistory reads the raw store); the agent gets
  * the trimmed projection.
+ *
+ * `mentions` + `attachmentIds` are written once per run (when the user message
+ * is appended) so the history endpoint can render `@` document chips and
+ * attachment chips even though the Anvia envelope never carries that metadata.
  */
 export class LeanHistoryStore implements MemoryStore {
   constructor(
     private readonly inner: PrismaMemoryStore,
     private readonly maxTurns: number,
+    private readonly mentions: MentionSnapshot[] = [],
+    private readonly attachmentIds: string[] = [],
   ) {}
 
   async load(options: MemoryLoadOptions): Promise<Message[]> {
@@ -94,9 +109,61 @@ export class LeanHistoryStore implements MemoryStore {
       ...options,
       messages: options.messages.map(stripPromptContext),
     });
+    await this.saveMentions(options);
+    await this.saveAttachments(options);
+  }
+
+  private async saveMentions(options: MemoryAppendOptions): Promise<void> {
+    if (this.mentions.length === 0) return;
+    // `append` runs once per message batch; the user message marks the turn we
+    // want to attach the chips to. runId is unique per chat request.
+    const hasUser = options.messages.some(
+      (m) => (m as { role?: unknown }).role === "user",
+    );
+    if (!hasUser) return;
+    try {
+      await prisma.chatMessageMention.createMany({
+        data: this.mentions.map((m) => ({
+          sessionId: options.scope.sessionId,
+          runId: options.runId,
+          turn: options.turn,
+          docId: m.docId,
+          workspaceId: m.workspaceId,
+          documentName: m.documentName,
+        })),
+        skipDuplicates: true,
+      });
+    } catch (err) {
+      // Chip metadata is a nicety: never fail the answer because of it.
+      console.warn("[chat:mentions] persist failed", err);
+    }
+  }
+
+  private async saveAttachments(options: MemoryAppendOptions): Promise<void> {
+    if (this.attachmentIds.length === 0) return;
+    const hasUser = options.messages.some(
+      (m) => (m as { role?: unknown }).role === "user",
+    );
+    if (!hasUser) return;
+    const ownerId = options.scope.userId;
+    if (!ownerId) return;
+    await linkAttachmentsToRun(
+      ownerId,
+      options.scope.sessionId,
+      this.attachmentIds,
+      options.runId,
+    );
   }
 
   async clear(options: MemoryClearOptions): Promise<void> {
     await this.inner.clear(options);
+    try {
+      const sessionId = options.scope.sessionId;
+      // A cleared session keeps no chips: mentions and attachments go with it.
+      await prisma.chatMessageMention.deleteMany({ where: { sessionId } });
+      await prisma.chatAttachment.deleteMany({ where: { sessionId } });
+    } catch (err) {
+      console.warn("[chat:history] chip cleanup failed", err);
+    }
   }
 }

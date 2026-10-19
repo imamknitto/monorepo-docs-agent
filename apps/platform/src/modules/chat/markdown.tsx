@@ -1,11 +1,16 @@
 import { isValidElement, type ReactNode } from 'react'
 import type { Components } from 'react-markdown'
+import { mediaUrl } from '../../lib/api'
 
 /** Image renderer shared by streaming ReactMarkdown and Message.Markdown. */
 export const ChatImage: Components['img'] = ({ src, alt }) => (
   <figure>
     {/* eslint-disable-next-line jsx-a11y/alt-text */}
-    <img src={src} alt={alt ?? ''} loading="lazy" />
+    <img
+      src={typeof src === 'string' ? mediaUrl(src) : src}
+      alt={alt ?? ''}
+      loading="lazy"
+    />
     {alt ? <figcaption>{alt}</figcaption> : null}
   </figure>
 )

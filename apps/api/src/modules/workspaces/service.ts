@@ -2,17 +2,21 @@ import { deleteDocument } from '../documents/service.js'
 import {
   createWorkspace,
   deleteWorkspaceRow,
+  findOwnedMentionableDocs,
   findOwnedWorkspace,
+  listMentionableDocuments,
   listOwnerDocuments,
+  listOwnerLandingDocuments,
   listWorkspaceDocuments,
   listWorkspaces,
   renameWorkspace,
   workspaceDocIds,
   type DocSummary,
+  type MentionableDoc,
   type WorkspaceRow,
 } from './store.js'
 
-export type { DocSummary, WorkspaceRow }
+export type { DocSummary, MentionableDoc, WorkspaceRow }
 
 export async function getWorkspaces(ownerId: string): Promise<WorkspaceRow[]> {
   return listWorkspaces(ownerId)
@@ -54,6 +58,34 @@ export async function getWorkspaceDocuments(
 
 export async function getOwnerDocuments(ownerId: string): Promise<DocSummary[]> {
   return listOwnerDocuments(ownerId)
+}
+
+/** Landing-page docs for a logged-in user (no workspace). */
+export async function getOwnerLandingDocuments(
+  ownerId: string,
+): Promise<DocSummary[]> {
+  return listOwnerLandingDocuments(ownerId)
+}
+
+/** Cross-workspace `@` picker candidates for one owner. */
+export async function getMentionableDocuments(
+  ownerId: string,
+  query: string,
+  excludeDocId?: string,
+): Promise<MentionableDoc[]> {
+  return listMentionableDocuments(ownerId, query, excludeDocId)
+}
+
+/** Mention ids resolved to owned, indexed workspace docs (order preserved). */
+export async function getOwnedMentionableDocs(
+  ownerId: string,
+  docIds: string[],
+): Promise<MentionableDoc[]> {
+  const docs = await findOwnedMentionableDocs(ownerId, docIds)
+  const byId = new Map(docs.map((d) => [d.doc_id, d]))
+  return docIds
+    .map((id) => byId.get(id))
+    .filter((d): d is MentionableDoc => Boolean(d))
 }
 
 /**

@@ -70,3 +70,34 @@ export const WrenchIcon = (p: P) => (
     <path d="M15 4a5 5 0 0 0-4.6 6.9L4 17.3V20h2.7l6.4-6.4A5 5 0 0 0 20 9l-2.6 2.6-2.2-.4-.4-2.2z" />
   </Icon>
 )
+
+export const FolderIcon = (p: P) => (
+  <Icon {...p}>
+    <path d="M3 6h6l2 2.5h10V19H3z" />
+  </Icon>
+)
+
+export const FileIcon = (p: P) => (
+  <Icon {...p}>
+    <path d="M6 3h8l4 4v14H6z" />
+    <path d="M14 3v4h4" />
+  </Icon>
+)
+
+export const ArrowRightIcon = (p: P) => (
+  <Icon {...p}>
+    <path d="M5 12h14M13 6l6 6-6 6" />
+  </Icon>
+)
+
+export const PlusIcon = (p: P) => (
+  <Icon {...p}>
+    <path d="M12 5v14M5 12h14" />
+  </Icon>
+)
+
+export const XIcon = (p: P) => (
+  <Icon {...p}>
+    <path d="M6 6l12 12M18 6L6 18" />
+  </Icon>
+)

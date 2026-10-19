@@ -1,14 +1,15 @@
 import {
   deleteArtifact,
-  listArtifacts,
+  listGuestArtifacts,
   readPublicFile,
   type ArtifactMeta,
   type StoredFile,
 } from './artifacts.js'
 import { deleteDocCascade } from './store.js'
 
+/** Anonymous landing-page listing (owner-less, non-workspace docs only). */
 export async function listDocuments(): Promise<ArtifactMeta[]> {
-  return listArtifacts()
+  return listGuestArtifacts()
 }
 
 export async function getMarkdownDownload(docId: string): Promise<StoredFile | null> {

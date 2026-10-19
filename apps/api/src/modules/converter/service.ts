@@ -158,7 +158,9 @@ export async function convertDocument(
   upload: ConvertUpload,
   requestId?: string,
   ctx?: PersistContext,
+  opts: { persist?: boolean } = {},
 ): Promise<ConvertDocumentResult> {
+  const { persist = true } = opts;
   const started = Date.now();
   console.log(
     `[convert] start req=${requestId ?? "-"} file=${upload.file.name} bytes=${upload.file.size}`,
@@ -198,7 +200,9 @@ export async function convertDocument(
   } catch {
     return { type: "bad-json" };
   }
-  if (payload.doc_id) {
+  if (payload.doc_id && persist) {
+    // Attachments pass persist:false (BRD §6.7/§12.13): no artifact, no
+    // Document row, no indexing — the converter's doc_id is throwaway.
     const stored = await persistConversion({
       payload,
       filename: upload.file.name,

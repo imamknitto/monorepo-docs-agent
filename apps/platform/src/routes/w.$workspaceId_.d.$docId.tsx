@@ -2,7 +2,7 @@ import { createFileRoute } from '@tanstack/react-router'
 import { requireSession } from '../lib/auth'
 import { ResultPage } from '../modules/preview/ResultPage'
 
-export const Route = createFileRoute('/w/$workspaceId/d/$docId')({
+export const Route = createFileRoute('/w/$workspaceId_/d/$docId')({
   beforeLoad: () => requireSession(),
   component: WorkspaceDocRoute,
 })

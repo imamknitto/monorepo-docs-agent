@@ -16,6 +16,7 @@ import { workspaceRoutes } from "./modules/workspaces/routes.js";
 import { healthRoutes } from "./modules/health/routes.js";
 import { debugRoutes } from "./modules/debug/routes.js";
 import { chatRoutes } from "./modules/chat/routes.js";
+import { attachmentRoutes } from "./modules/chat/attachments/routes.js";
 
 const app = new Hono();
 
@@ -27,7 +28,16 @@ app.use(
     // Session cookie must be sent/accepted on cross-origin calls from the
     // platform; requires an explicit origin (never "*") plus credentials.
     credentials: true,
-    allowHeaders: ["Content-Type", "Authorization", "x-user-id"],
+    allowHeaders: [
+      "Content-Type",
+      "Authorization",
+      "x-user-id",
+      // Cross-workspace mentions travel as a header so the Anvia request
+      // envelope stays untouched (BRD §6.5); the browser preflights it.
+      "x-chat-mentions",
+      // Attachment ids for the current message — same out-of-envelope channel.
+      "x-chat-attachments",
+    ],
     // Browser JS can only read safelisted response headers — the Anvia client
     // transport validates this one, so it must be visible to the platform.
     exposeHeaders: ["x-anvia-stream-protocol"],
@@ -50,6 +60,9 @@ const v1 = new Hono();
 v1.route("/", converterRoutes);
 v1.route("/", documentsRoutes);
 v1.route("/", workspaceRoutes);
+// Attachment routes before :sessionId chat routes; static paths win anyway,
+// but this order makes the intent obvious.
+v1.route("/", attachmentRoutes);
 v1.route("/", chatRoutes);
 v1.route("/", debugRoutes);
 

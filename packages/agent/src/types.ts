@@ -11,6 +11,9 @@ export interface AskInput {
 export interface Citation {
   page: number
   excerpt: string
+  /** Set when the page came from a mentioned (non-active) document. */
+  docId?: string
+  documentName?: string
 }
 
 export interface AskResult {
@@ -22,6 +25,28 @@ export interface AskResult {
 export interface RetrievedPage {
   pageNumber: number
   content: string
+  /** Source document; set for multi-document retrieval (active doc + mentions). */
+  docId?: string
+  documentName?: string
+}
+
+/** One uploaded file's processed text, injected as pure data into the prompt. */
+export interface AttachmentContext {
+  /** Sanitized file name; doubles as the citation label for the attachment. */
+  name: string
+  content: string
+  /** Content was cut at the per-attachment char budget. */
+  truncated?: boolean
+  /** Text matched prompt-injection patterns; block is marked as data-only. */
+  flagged?: boolean
+}
+
+/** One document available to the agent for a single turn. */
+export interface DocumentScope {
+  docId: string
+  documentName: string
+  /** The document the chat page is open on (vs. an `@` mention). */
+  active?: boolean
 }
 
 export class NotImplementedError extends Error {

@@ -1,5 +1,9 @@
 import type { AnyTool } from "@anvia/core";
 import type { ClientStreamError } from "@anvia/client";
+import {
+  retrieveDocuments,
+  vectorFilter,
+} from "@anvia/core/vector-store";
 import { OpenAIClient } from "@anvia/openai";
 import { PrismaMemoryStore } from "@anvia/memory-prisma";
 import type { Message } from "@anvia/core";
@@ -9,14 +13,28 @@ import {
   CHAT_MAX_TURNS,
   OPENAI_API_KEY,
   OPENAI_BASE_URL,
+  RETRIEVAL_PAGE_BUDGET,
+  RETRIEVAL_TOP_K_ACTIVE,
+  RETRIEVAL_TOP_K_MENTION,
   hasChatModel,
 } from "../../config.js";
-import { LeanHistoryStore, extractQuestion } from "./history-store.js";
+import {
+  LeanHistoryStore,
+  extractQuestion,
+  type MentionSnapshot,
+} from "./history-store.js";
+import {
+  loadAttachmentChips,
+  type ReadyAttachment,
+  type UiAttachment,
+} from "./attachments/service.js";
 import { prisma } from "../../utils/prisma.js";
+import { getOwnedMentionableDocs } from "../workspaces/service.js";
 import {
   getEmbeddingModel,
   getVectorStore,
-  retrieveForDoc,
+  retrieveForDocs,
+  type PageMetadata,
 } from "../../rag/vector.js";
 import {
   buildAnswerPrompt,
@@ -119,6 +137,19 @@ export type UiMessage = {
   id: string;
   role: "user" | "assistant";
   parts: UiPart[];
+  metadata?: {
+    mentions?: UiMention[];
+    attachments?: UiAttachment[];
+  };
+};
+
+/** A document chip rendered with the user message that referenced it. */
+export type UiMention = {
+  docId: string;
+  documentName: string;
+  workspaceId: string | null;
+  /** True when the referenced document no longer exists. */
+  deleted: boolean;
 };
 
 type CoreContentPart = { type?: unknown; [key: string]: unknown };
@@ -176,6 +207,46 @@ function collectToolResults(
 }
 
 /**
+ * Mention chips per run, with a `deleted` flag for documents that are gone.
+ * The name is a snapshot from send time, so a deleted document still renders.
+ */
+async function loadMentions(
+  sessionId: string,
+): Promise<Map<string, UiMention[]>> {
+  const rows = await prisma.chatMessageMention.findMany({
+    where: { sessionId },
+    orderBy: { createdAt: "asc" },
+    select: {
+      runId: true,
+      docId: true,
+      documentName: true,
+      workspaceId: true,
+    },
+  });
+  if (rows.length === 0) return new Map();
+
+  const docIds = [...new Set(rows.map((r) => r.docId))];
+  const alive = await prisma.document.findMany({
+    where: { id: { in: docIds } },
+    select: { id: true },
+  });
+  const aliveIds = new Set(alive.map((d) => d.id));
+
+  const byRun = new Map<string, UiMention[]>();
+  for (const row of rows) {
+    const list = byRun.get(row.runId) ?? [];
+    list.push({
+      docId: row.docId,
+      documentName: row.documentName,
+      workspaceId: row.workspaceId,
+      deleted: !aliveIds.has(row.docId),
+    });
+    byRun.set(row.runId, list);
+  }
+  return byRun;
+}
+
+/**
  * History shaped for the chat UI: user/assistant messages whose parts carry
  * text, reasoning and tool calls, with tool results merged into the calling
  * turn. This keeps tool activity visible after a page refresh.
@@ -184,13 +255,33 @@ export async function loadUiHistory(
   sessionId: string,
   userId: string,
 ): Promise<UiMessage[]> {
-  const memory = getMemoryStore();
-  const messages = await memory.load({ scope: { sessionId, userId } });
+  // Read rows directly (not `memory.load`) because the mention chips are keyed
+  // by `runId`, which the memory interface does not expose.
+  const session = await prisma.agentMemorySession.findFirst({
+    where: { sessionId, userId },
+    select: { id: true },
+  });
+  if (!session) return [];
+
+  const rows = await prisma.agentMemoryMessage.findMany({
+    where: { memorySessionId: session.id },
+    orderBy: { position: "asc" },
+    select: { message: true, runId: true },
+  });
+  const messages = rows.map((row) => row.message as unknown as Message);
   const results = collectToolResults(messages);
+  const mentionsByRun = await loadMentions(sessionId);
+  let attachmentsByRun: Map<string, UiAttachment[]> | null = null;
+  try {
+    attachmentsByRun = await loadAttachmentChips(sessionId);
+  } catch (err) {
+    console.warn("[chat:history] attachment chips load failed", err);
+  }
   const out: UiMessage[] = [];
 
   for (const [mi, message] of messages.entries()) {
     const role = (message as { role?: unknown }).role;
+    const runId = rows[mi]?.runId;
 
     if (role === "user") {
       const parts: UiPart[] = [];
@@ -199,7 +290,24 @@ export async function loadUiHistory(
         const text = extractQuestion(part.text).trim();
         if (text) parts.push({ id: `u${mi}_${pi}`, type: "text", text });
       }
-      if (parts.length > 0) out.push({ id: `msg_${mi}`, role: "user", parts });
+      if (parts.length > 0) {
+        const mentions = runId ? mentionsByRun.get(runId) : undefined;
+        const attachments =
+          runId && attachmentsByRun !== null
+            ? attachmentsByRun.get(runId)
+            : undefined;
+        const metadata: UiMessage["metadata"] = {};
+        if (mentions && mentions.length > 0) metadata.mentions = mentions;
+        if (attachments && attachments.length > 0) {
+          metadata.attachments = attachments;
+        }
+        out.push({
+          id: `msg_${mi}`,
+          role: "user",
+          parts,
+          ...(Object.keys(metadata).length > 0 ? { metadata } : {}),
+        });
+      }
       continue;
     }
 
@@ -273,24 +381,128 @@ export async function clearHistory(
   await memory.clear({ scope: { sessionId, userId } });
 }
 
-export async function retrievePages(
-  docId: string,
-  question: string,
-  topK = 4,
-): Promise<RetrievedPage[]> {
-  const pages = await prisma.documentPage.findMany({
-    where: { documentId: docId },
-    orderBy: { pageNumber: "asc" },
-    select: { pageNumber: true, content: true },
+/** Retrieval budget: the active document first, then each mention. */
+export type RetrievalDoc = { docId: string; documentName: string; active?: boolean };
+
+/**
+ * Validate mention ids against the caller's own, indexed, workspace-scoped
+ * documents. Any id that does not resolve rejects the whole request with a
+ * generic 403: never reveal whether a foreign document exists.
+ */
+export async function resolveMentions(
+  ownerId: string,
+  docIds: string[],
+): Promise<
+  | { ok: true; mentions: MentionSnapshot[] }
+  | { ok: false; status: 403; detail: string }
+> {
+  if (docIds.length === 0) return { ok: true, mentions: [] };
+  const docs = await getOwnedMentionableDocs(ownerId, docIds);
+  if (docs.length !== docIds.length) {
+    return {
+      ok: false,
+      status: 403,
+      detail: "One or more mentioned documents are not available.",
+    };
+  }
+  return {
+    ok: true,
+    mentions: docs.map((d) => ({
+      docId: d.doc_id,
+      documentName: d.filename,
+      workspaceId: d.workspace_id || null,
+    })),
+  };
+}
+
+/** Display name of a document (used for the active document in citations). */
+export async function getDocumentName(docId: string): Promise<string> {
+  const row = await prisma.document.findUnique({
+    where: { id: docId },
+    select: { name: true },
   });
-  if (pages.length === 0) return [];
+  return row?.name ?? docId;
+}
+
+/**
+ * Flatten per-document hits into one prompt list, honoring the per-document
+ * top-k and the global page budget. Active document first so it can never be
+ * crowded out by mentions. Pure helper (unit-tested).
+ */
+export function limitRetrievedPages(
+  perDoc: Map<string, RetrievedPage[]>,
+  docs: RetrievalDoc[],
+  budget = RETRIEVAL_PAGE_BUDGET,
+): RetrievedPage[] {
+  const ordered = [...docs].sort(
+    (a, b) => Number(Boolean(b.active)) - Number(Boolean(a.active)),
+  );
+  const result: RetrievedPage[] = [];
+  for (const doc of ordered) {
+    const limit = doc.active ? RETRIEVAL_TOP_K_ACTIVE : RETRIEVAL_TOP_K_MENTION;
+    result.push(...(perDoc.get(doc.docId) ?? []).slice(0, limit));
+  }
+  return result.slice(0, budget);
+}
+
+/**
+ * Retrieve pages for the active document plus its mentions.
+ *
+ * Top-k is per document (not global) so a mention cannot drown the active
+ * document, and the combined result is capped by `RETRIEVAL_PAGE_BUDGET`.
+ */
+export async function retrievePagesForDocs(
+  docs: RetrievalDoc[],
+  question: string,
+): Promise<RetrievedPage[]> {
+  if (docs.length === 0) return [];
+  const ordered = [...docs].sort(
+    (a, b) => Number(Boolean(b.active)) - Number(Boolean(a.active)),
+  );
+
+  let vectorPages: RetrievedPage[] | null = null;
   try {
-    const vector = await retrieveForDoc(docId, question, topK);
-    if (vector && vector.length > 0) return vector;
+    vectorPages = await retrieveForDocs(
+      ordered.map((d) => ({
+        docId: d.docId,
+        documentName: d.documentName,
+        topK: d.active ? RETRIEVAL_TOP_K_ACTIVE : RETRIEVAL_TOP_K_MENTION,
+      })),
+      question,
+    );
   } catch (err) {
     console.warn("[chat] vector retrieval failed, keyword fallback", err);
   }
-  return retrieveKeyword(pages, question, topK);
+
+  const perDoc = new Map<string, RetrievedPage[]>();
+  if (vectorPages) {
+    for (const page of vectorPages) {
+      const key = page.docId ?? "";
+      const list = perDoc.get(key) ?? [];
+      list.push(page);
+      perDoc.set(key, list);
+    }
+  }
+
+  for (const doc of ordered) {
+    if ((perDoc.get(doc.docId)?.length ?? 0) > 0) continue;
+    // Keyword fallback is per document too, so every mention gets a chance.
+    const rows = await prisma.documentPage.findMany({
+      where: { documentId: doc.docId },
+      orderBy: { pageNumber: "asc" },
+      select: { pageNumber: true, content: true },
+    });
+    if (rows.length === 0) continue;
+    const topK = doc.active ? RETRIEVAL_TOP_K_ACTIVE : RETRIEVAL_TOP_K_MENTION;
+    const hits = retrieveKeyword(rows, question, topK).map((p) => ({
+      ...p,
+      docId: doc.docId,
+      documentName: doc.documentName,
+    }));
+    perDoc.set(doc.docId, hits);
+  }
+
+  return limitRetrievedPages(perDoc, ordered);
 }
 
 async function readPageContent(
@@ -304,21 +516,46 @@ async function readPageContent(
   return row?.content ?? null;
 }
 
-async function createToolsForDocument(docId: string): Promise<AnyTool[]> {
+async function createToolsForDocuments(
+  documents: RetrievalDoc[],
+): Promise<AnyTool[]> {
+  const scopes = documents.map((d) => ({
+    docId: d.docId,
+    documentName: d.documentName || d.docId,
+    active: d.active,
+  }));
+  // Allow-list enforcement lives in the tool wrapper: `readPage`/`search` are
+  // only ever wired for documents resolved server-side for this turn.
   const tools: AnyTool[] = [
     createDocumentReadTool({
-      docId,
-      readPage: (n) => readPageContent(docId, n),
+      documents: scopes,
+      readPage: (docId, pageNumber) => readPageContent(docId, pageNumber),
     }),
   ];
   try {
     const embeddingModel = await getEmbeddingModel();
     if (embeddingModel) {
+      const store = getVectorStore();
       tools.unshift(
         createDocumentSearchTool({
-          store: getVectorStore(),
-          model: embeddingModel,
-          docId,
+          documents: scopes,
+          search: async (docId, query) => {
+            const results = await retrieveDocuments<RetrievedPage, PageMetadata>(
+              {
+                store,
+                model: embeddingModel,
+                query,
+                topK: RETRIEVAL_TOP_K_MENTION,
+                filter: vectorFilter.eq("documentId", docId),
+              },
+            );
+            return results.map((r) => ({
+              pageNumber: r.metadata?.pageNumber ?? 0,
+              content: r.document.content,
+              docId,
+              documentName: r.metadata?.documentName,
+            }));
+          },
         }),
       );
     }
@@ -328,7 +565,13 @@ async function createToolsForDocument(docId: string): Promise<AnyTool[]> {
   return tools;
 }
 
-async function buildAgent(docId: string, summary: string | null) {
+async function buildAgent(
+  docId: string,
+  summary: string | null,
+  documents: RetrievalDoc[],
+  mentions: MentionSnapshot[],
+  attachmentIds: string[] = [],
+) {
   const model = getClient().completionModel({
     modelId: CHAT_MODEL,
     api: "chat",
@@ -337,9 +580,19 @@ async function buildAgent(docId: string, summary: string | null) {
     docId,
     model,
     summary,
-    tools: await createToolsForDocument(docId),
+    documents: documents.map((d) => ({
+      docId: d.docId,
+      documentName: d.documentName || d.docId,
+      active: d.active,
+    })),
+    tools: await createToolsForDocuments(documents),
     maxTurns: CHAT_MAX_TURNS,
-    memory: new LeanHistoryStore(getMemoryStore(), CHAT_HISTORY_TURNS),
+    memory: new LeanHistoryStore(
+      getMemoryStore(),
+      CHAT_HISTORY_TURNS,
+      mentions,
+      attachmentIds,
+    ),
   });
 }
 
@@ -394,15 +647,42 @@ export function toClientError(error: unknown): ClientStreamError {
   };
 }
 
-/** Shared RAG setup: retrieved pages + prompt + agent. Streaming and ask share it. */
+/**
+ * Shared RAG setup: retrieved pages + prompt + agent. Streaming and ask share it.
+ *
+ * `documents` is the resolved allow-list for this turn (active doc + validated
+ * mentions); `mentions` is the same list minus the active doc, used for chips.
+ * `attachments` are validated upload contexts (injected into `<attachment>`).
+ */
 export async function prepareAnswer(
   docId: string,
   question: string,
   summary: string | null,
+  mentions: MentionSnapshot[] = [],
+  activeDocumentName = "",
+  attachments: ReadyAttachment[] = [],
 ) {
-  const pages = await retrievePages(docId, question);
-  const agent = await buildAgent(docId, summary);
-  return { pages, prompt: buildAnswerPrompt(question, pages), agent };
+  const documents: RetrievalDoc[] = [
+    { docId, documentName: activeDocumentName || docId, active: true },
+    ...mentions.map((m) => ({
+      docId: m.docId,
+      documentName: m.documentName,
+      active: false,
+    })),
+  ];
+  const pages = await retrievePagesForDocs(documents, question);
+  const agent = await buildAgent(
+    docId,
+    summary,
+    documents,
+    mentions,
+    attachments.map((a) => a.id),
+  );
+  return {
+    pages,
+    prompt: buildAnswerPrompt(question, pages, attachments),
+    agent,
+  };
 }
 
 /** Raw agent events for the platform stream. `streamAnswer` keeps citations for the CLI runner. */
@@ -412,26 +692,42 @@ export async function* streamAgentAnswer(
   userId: string,
   question: string,
   summary: string | null,
+  mentions: MentionSnapshot[] = [],
+  activeDocumentName = "",
+  attachments: ReadyAttachment[] = [],
 ) {
-  const { prompt, agent } = await prepareAnswer(docId, question, summary);
+  const { prompt, agent } = await prepareAnswer(
+    docId,
+    question,
+    summary,
+    mentions,
+    activeDocumentName,
+    attachments,
+  );
   yield* agent.stream({
     prompt,
     session: { sessionId, userId, metadata: { docId } },
   });
 }
 
-/** Stream one answer over the doc's retrieved pages, persisting via memory. */
+/** Stream one answer over the turn's retrieved pages, persisting via memory. */
 export async function* streamAnswer(
   docId: string,
   sessionId: string,
   userId: string,
   question: string,
   summary: string | null,
+  mentions: MentionSnapshot[] = [],
+  activeDocumentName = "",
+  attachments: ReadyAttachment[] = [],
 ): AsyncGenerator<ChatStreamEvent> {
   const { pages, prompt, agent } = await prepareAnswer(
     docId,
     question,
     summary,
+    mentions,
+    activeDocumentName,
+    attachments,
   );
   yield { type: "citations", citations: toCitations(pages) };
 

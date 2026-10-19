@@ -98,6 +98,49 @@ model AgentMemoryError {
   @@index([runId])
 }
 
+// Cross-workspace mentions attached to one user turn. `docId` has no FK on
+// purpose: the name is a snapshot so history can still render a "deleted
+// document" chip after the document (and its row) is gone.
+model ChatMessageMention {
+  id           String   @id @default(cuid())
+  sessionId    String
+  runId        String
+  turn         Int
+  docId        String
+  workspaceId  String?
+  documentName String
+  createdAt    DateTime @default(now())
+
+  @@unique([sessionId, runId, docId])
+  @@index([sessionId])
+  @@index([docId])
+}
+
+// File attachment uploaded into one chat turn. Only its processed text
+// (PDF/markdown, image OCR, TXT) is stored — never indexed as a Document
+// (BRD §12.13). `docId`/`sessionId` have no FK on purpose: the rows are
+// snapshot metadata kept so history chips keep rendering, mirroring
+// ChatMessageMention. `messageRef` (a runId) is written when a sent
+// message uses the attachment; deleting soft-deletes for the same reason.
+model ChatAttachment {
+  id         String   @id @default(cuid())
+  ownerId    String
+  docId      String
+  sessionId  String   @default("")
+  messageRef String?
+  filename   String
+  mimeType   String
+  sizeBytes  Int
+  status     String   @default("processing") // processing | ready | failed | deleted
+  truncated  Boolean  @default(false)
+  markdown   String?  @db.Text
+  error      String?
+  createdAt  DateTime @default(now())
+
+  @@index([ownerId, sessionId])
+  @@index([sessionId])
+}
+
 // Better Auth (v1.7.x) core tables. Model names are PascalCase but the
 // Prisma adapter addresses them by lowercased first letter (`prisma.user`),
 // which matches the adapter's default model names. Field set matches

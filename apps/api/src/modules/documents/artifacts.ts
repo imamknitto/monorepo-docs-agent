@@ -36,6 +36,9 @@ export type ArtifactImage = {
   filename?: string;
   kind?: string;
   data_base64?: string | null;
+  /** Standalone image OCR (`/v1/ocr`): recognized text for this image. */
+  ocr_text?: string;
+  flowchart_mermaid?: string;
 };
 
 export type ArtifactPayload = {
@@ -224,6 +227,16 @@ export async function listArtifacts(): Promise<ArtifactMeta[]> {
   }
   documents.sort((a, b) => (b.created_at ?? '').localeCompare(a.created_at ?? ''));
   return documents;
+}
+
+/**
+ * Docs the anonymous landing page may show: no owner and no workspace.
+ * Workspace-owned docs are private to their owner and must never leak into
+ * the guest listing, even though they share the same artifact directory.
+ */
+export async function listGuestArtifacts(): Promise<ArtifactMeta[]> {
+  const documents = await listArtifacts();
+  return documents.filter((doc) => !doc.owner_id && !doc.workspace_id);
 }
 
 export async function listExpiredDocIds(now: Date = new Date()): Promise<string[]> {

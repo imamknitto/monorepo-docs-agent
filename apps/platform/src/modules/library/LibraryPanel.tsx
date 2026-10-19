@@ -20,7 +20,7 @@ export function LibraryPanel() {
     setRefreshing(true)
     setDocsError(null)
     try {
-      setDocs(await listDocuments())
+      setDocs(await listDocuments('landing'))
     } catch (err) {
       setDocsError(err instanceof Error ? err.message : t('common.unknownError'))
     } finally {

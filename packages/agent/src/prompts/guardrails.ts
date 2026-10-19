@@ -24,6 +24,18 @@ function hit(text: string, patterns: RegExp[]): RegExp | undefined {
   return patterns.find((re) => re.test(text))
 }
 
+/**
+ * Scan untrusted file content (attachment text, OCR output) against the
+ * injection list. Unlike the user-input guard, a hit does NOT reject the
+ * content — real documents legitimately contain these phrases — it flags
+ * it so the prompt can mark the block as pure data.
+ */
+export function containsInjectionPattern(
+  text: string,
+): RegExp | undefined {
+  return hit(text, INJECTION_PATTERNS)
+}
+
 const injectionGuard = defineInputGuardrail({
   id: 'prompt-injection',
   check({ inputText }, actions) {

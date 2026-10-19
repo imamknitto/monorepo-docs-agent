@@ -21,7 +21,10 @@ type Ctx = Context<{ Variables: AuthVariables }>
 const workspaceRoutes = new Hono<{ Variables: AuthVariables }>()
 
 // Every workspace route is login-only and scoped to the session's owner.
-workspaceRoutes.use('/*', requireAuth)
+// Scoped to `/workspaces/*` (not `/*`): this sub-app is mounted at the v1 root,
+// so a bare wildcard would also gate every sibling route (chat, status, debug).
+workspaceRoutes.use('/workspaces', requireAuth)
+workspaceRoutes.use('/workspaces/*', requireAuth)
 
 workspaceRoutes.use(
   '/workspaces/:id/convert*',

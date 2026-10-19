@@ -1,12 +1,125 @@
 import { useState } from 'react'
+import { Link } from '@tanstack/react-router'
 import ReactMarkdown from 'react-markdown'
 import remarkGfm from 'remark-gfm'
 import { Message, useMessage, useMessagePart } from '@anvia/react-ui'
 import type { UIMessage } from '@anvia/react'
 import { useI18n } from '../../lib/i18n'
-import { CheckIcon, CopyIcon, WrenchIcon } from '../../components/icons'
+import { CheckIcon, CopyIcon, FileIcon, WrenchIcon } from '../../components/icons'
 import { chatMarkdownComponents } from './markdown'
 import { jsonText } from './protocol'
+import { formatAttachmentSize } from './attachments'
+
+const chip =
+  'inline-flex max-w-[14rem] items-center gap-1 rounded-full border px-2 py-0.5 text-[11px] font-medium'
+
+/** Mention chip persisted server-side with the user message. */
+type UiMention = {
+  docId: string
+  documentName: string
+  workspaceId: string | null
+  deleted: boolean
+}
+
+/** Attachment chip persisted server-side with the user message. */
+type UiAttachment = {
+  id: string
+  filename: string
+  mimeType: string
+  sizeBytes: number
+  truncated: boolean
+  deleted: boolean
+}
+
+/**
+ * File chips for past user messages. A chip that was soft-deleted keeps its
+ * snapshot name and renders struck-through, matching the mention pattern.
+ */
+export function MessageAttachments() {
+  const { message } = useMessage()
+  const { t } = useI18n()
+  const items =
+    (message.metadata as { attachments?: UiAttachment[] } | undefined)?.attachments ??
+    []
+  if (items.length === 0) return null
+
+  return (
+    <div className="mb-1.5 flex flex-wrap gap-1.5">
+      {items.map((a) => (
+        <span
+          key={a.id}
+          className={`${chip} ${
+            a.deleted
+              ? 'border-line bg-surface-2 text-fg-faint line-through'
+              : 'border-line bg-surface text-fg-soft'
+          }`}
+          title={a.filename}
+        >
+          <FileIcon className="shrink-0" />
+          <span className="truncate">{a.filename}</span>
+          <span className="shrink-0 font-mono text-fg-faint">
+            {formatAttachmentSize(a.sizeBytes)}
+          </span>
+          {a.deleted ? (
+            <span className="shrink-0 no-underline">
+              · {t('chat.attachChipDeleted')}
+            </span>
+          ) : a.truncated ? (
+            <span className="shrink-0 no-underline text-fg-faint">
+              · {t('chat.attachChipTruncated')}
+            </span>
+          ) : null}
+        </span>
+      ))}
+    </div>
+  )
+}
+
+/**
+ * `@` chips for the current user message. A document that has since been
+ * deleted keeps its snapshot name and renders as a non-clickable "deleted"
+ * chip, matching the BRD requirement.
+ */
+export function MessageMentions() {
+  const { message } = useMessage()
+  const { t } = useI18n()
+  const mentions =
+    (message.metadata as { mentions?: UiMention[] } | undefined)?.mentions ?? []
+  if (mentions.length === 0) return null
+
+  return (
+    <div className="mb-1.5 flex flex-wrap gap-1.5">
+      {mentions.map((m) =>
+        m.deleted ? (
+          <span
+            key={m.docId}
+            className={`${chip} border-line bg-surface-2 text-fg-faint line-through`}
+            title={t('chat.mentionDeleted')}
+          >
+            <span className="truncate">@{m.documentName}</span>
+            <span className="shrink-0 no-underline">
+              · {t('chat.mentionDeleted')}
+            </span>
+          </span>
+        ) : m.workspaceId ? (
+          <Link
+            key={m.docId}
+            to="/w/$workspaceId/d/$docId"
+            params={{ workspaceId: m.workspaceId, docId: m.docId }}
+            className={`${chip} border-line bg-surface text-fg-soft transition-colors hover:border-line-strong hover:text-fg`}
+            title={m.documentName}
+          >
+            <span className="truncate">@{m.documentName}</span>
+          </Link>
+        ) : (
+          <span key={m.docId} className={`${chip} border-line bg-surface text-fg-soft`}>
+            <span className="truncate">@{m.documentName}</span>
+          </span>
+        ),
+      )}
+    </div>
+  )
+}
 
 /** One tool call, rendered inline inside its assistant message. */
 function ToolCall() {

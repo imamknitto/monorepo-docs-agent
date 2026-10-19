@@ -109,6 +109,13 @@ describe('artifact store', () => {
     assert.equal(persistent?.expires_at, null);
     assert.equal(persistent?.workspace_id, 'ws_1');
     assert.equal(persistent?.owner_id, 'u:owner-1');
+
+    // The guest listing must not leak owner/workspace docs.
+    const guests = await artifacts.listGuestArtifacts();
+    assert.deepEqual(
+      guests.map((d) => d.doc_id),
+      [guestId],
+    );
   });
 
   test('reports disk full once usage reaches the cap', async () => {

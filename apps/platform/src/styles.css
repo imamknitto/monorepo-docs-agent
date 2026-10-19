@@ -299,6 +299,49 @@ body {
   margin-top: 0.35rem;
 }
 
+/* Composer (tiptap) ships its own focus ring and placeholder-less CSS. The
+   focus affordance lives on the wrapper (`focus-within:`), so the editable
+   itself must stay flat — otherwise the box shows a doubled border while
+   typing. The descendant selector outranks the kit's `:focus-visible` rule. */
+[data-anvia-composer-input] [data-anvia-composer-editor],
+[data-anvia-composer-input] [data-anvia-composer-editor]:focus,
+[data-anvia-composer-input] [data-anvia-composer-editor]:focus-visible {
+  outline: none;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+[data-anvia-composer-editor] p {
+  margin: 0;
+}
+
+/* The kit only caps `max-height` for auto-resize inputs, so `minRows` had no
+   visible effect on the tiptap composer (it stayed one line tall). Honor it,
+   and stretch the editable too so the whole box is clickable. */
+[data-anvia-composer-input][data-auto-resize] {
+  min-height: calc(var(--anvia-composer-min-rows, 1) * 1.5em + 1.25rem);
+}
+
+[data-anvia-composer-input][data-auto-resize] [data-anvia-composer-editor] {
+  min-height: calc(var(--anvia-composer-min-rows, 1) * 1.5em);
+}
+
+[data-anvia-composer-editor] p.is-editor-empty:first-child::before {
+  content: attr(data-placeholder);
+  float: left;
+  height: 0;
+  color: var(--color-fg-faint);
+  pointer-events: none;
+}
+
+/* `@` mention entity rendered as an inline chip inside the composer. */
+[data-anvia-composer-editor] [data-id] {
+  border-radius: var(--radius-sm);
+  background: var(--color-surface-2);
+  padding: 0.05rem 0.25rem;
+  font-size: 0.9em;
+}
+
 @media (prefers-reduced-motion: reduce) {
   * {
     animation: none !important;

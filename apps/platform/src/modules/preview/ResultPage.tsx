@@ -9,11 +9,12 @@ import { Spinner } from '../../components/ui/Spinner'
 import { Alert } from '../../components/ui/Alert'
 import { Toc, type TocItem } from './Toc'
 import { API_URL } from '../../lib/api'
+import { useSession } from '../../lib/auth'
 import { fetchMarkdown } from './api'
 import { deleteDocument, listDocuments, type DocSummary } from '../library/api'
 import type { ConvertResponse } from '../convert/api'
 import { forgetAllDocSessions } from '../chat/sessions'
-import { localeTag, useI18n } from '../../lib/i18n'
+import { useI18n } from '../../lib/i18n'
 
 function loadMeta(docId: string): ConvertResponse | null {
   try {
@@ -35,6 +36,7 @@ export function ResultPage({
   const navigate = useNavigate()
   const confirm = useConfirm()
   const { t } = useI18n()
+  const { data: session } = useSession()
   const [markdown, setMarkdown] = useState<string | null>(null)
   const [meta, setMeta] = useState<ConvertResponse | null>(null)
   const [listed, setListed] = useState<DocSummary | null>(null)
@@ -141,8 +143,6 @@ export function ResultPage({
     }
   }
 
-  const stats = meta?.stats ?? listed?.stats
-  const warnings = meta?.warnings ?? listed?.warnings ?? []
   const expiresAt = meta?.expires_at ?? listed?.expires_at ?? null
   const title = listed?.filename ?? t('result.titleDefault')
   const hasToc = view === 'preview' && headings.length > 1
@@ -183,28 +183,6 @@ export function ResultPage({
             >
               {title}
             </h1>
-            <p className="mt-1 font-mono text-xs text-fg-soft">
-              {docId}
-              {expiresAt && (
-                <> &middot; {t('result.expiresPrefix')} {new Date(expiresAt).toLocaleTimeString(localeTag())}</>
-              )}
-              {stats && (
-                <>
-                  {' '} &middot; {stats.pages} {t('result.statPages')} &middot; {stats.tables}{' '}
-                  {t('result.statTables')} &middot; {stats.images_kept} {t('result.statImages')}
-                  {stats.scanned_pages > 0 && (
-                    <>
-                      {' '} &middot; {stats.scanned_pages} {t('result.statScanned')}
-                    </>
-                  )}
-                  {stats.images_skipped > 0 && (
-                    <>
-                      {' '} &middot; {stats.images_skipped} {t('result.statSkipped')}
-                    </>
-                  )}
-                </>
-              )}
-            </p>
           </div>
           <div className="flex flex-wrap gap-2">
             <a href={`${API_URL}/v1/download/${docId}`} className={action}>
@@ -260,29 +238,11 @@ export function ResultPage({
         </div>
       </div>
 
-      <details className="mt-4 shrink-0 rounded-md border border-line bg-surface px-4 py-2.5 text-sm">
-        <summary className="cursor-pointer select-none font-medium">
-          {t('result.details')}
-          {warnings.length > 0 && (
-            <span className="ml-2 font-mono text-xs font-normal text-warn">
-              {t('result.detailsWarnings', { n: warnings.length })}
-            </span>
-          )}
-        </summary>
-        {warnings.length > 0 && (
-          <div role="note" className="mt-2 border-l-2 border-warn bg-warn/10 px-4 py-2.5">
-            <p className="font-medium">{t('result.headsUp')}</p>
-            <ul className="mt-1 list-disc pl-5 text-fg-soft">
-              {warnings.map((w) => (
-                <li key={w}>{w}</li>
-              ))}
-            </ul>
-          </div>
-        )}
-        <div className="mt-3">
+      {expiresAt && !session?.user && (
+        <div className="mt-4 shrink-0">
           <ExpiryNotice expiresAt={expiresAt} />
         </div>
-      </details>
+      )}
 
       <div
         className={`mt-5 gap-5 lg:grid lg:min-h-0 lg:flex-1 lg:grid-cols-[minmax(20rem,26rem)_minmax(0,1fr)] lg:grid-rows-1 ${
@@ -290,7 +250,11 @@ export function ResultPage({
         }`}
       >
         <aside className="min-w-0 max-lg:order-1 max-lg:mb-5 lg:min-h-0">
-          <ChatPanel docId={docId} className="h-[70vh] lg:h-full" />
+          <ChatPanel
+            docId={docId}
+            workspaceId={workspaceId}
+            className="h-[70vh] lg:h-full"
+          />
         </aside>
 
         <div

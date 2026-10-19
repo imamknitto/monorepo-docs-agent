@@ -14,7 +14,7 @@ import { Route as DashboardRouteImport } from './routes/dashboard'
 import { Route as LoginRouteImport } from './routes/login'
 import { Route as RDocIdRouteImport } from './routes/r.$docId'
 import { Route as WWorkspaceIdRouteImport } from './routes/w.$workspaceId'
-import { Route as WWorkspaceIdDDocIdRouteImport } from './routes/w.$workspaceId.d.$docId'
+import { Route as WWorkspaceIdDDocIdRouteImport } from './routes/w.$workspaceId_.d.$docId'
 
 const IndexRoute = IndexRouteImport.update({
   id: '/',
@@ -42,9 +42,9 @@ const WWorkspaceIdRoute = WWorkspaceIdRouteImport.update({
   getParentRoute: () => rootRouteImport,
 } as any)
 const WWorkspaceIdDDocIdRoute = WWorkspaceIdDDocIdRouteImport.update({
-  id: '/d/$docId',
-  path: '/d/$docId',
-  getParentRoute: () => WWorkspaceIdRoute,
+  id: '/w/$workspaceId_/d/$docId',
+  path: '/w/$workspaceId/d/$docId',
+  getParentRoute: () => rootRouteImport,
 } as any)
 
 export interface FileRoutesByFullPath {
@@ -52,7 +52,7 @@ export interface FileRoutesByFullPath {
   '/dashboard': typeof DashboardRoute
   '/login': typeof LoginRoute
   '/r/$docId': typeof RDocIdRoute
-  '/w/$workspaceId': typeof WWorkspaceIdRouteWithChildren
+  '/w/$workspaceId': typeof WWorkspaceIdRoute
   '/w/$workspaceId/d/$docId': typeof WWorkspaceIdDDocIdRoute
 }
 export interface FileRoutesByTo {
@@ -60,7 +60,7 @@ export interface FileRoutesByTo {
   '/dashboard': typeof DashboardRoute
   '/login': typeof LoginRoute
   '/r/$docId': typeof RDocIdRoute
-  '/w/$workspaceId': typeof WWorkspaceIdRouteWithChildren
+  '/w/$workspaceId': typeof WWorkspaceIdRoute
   '/w/$workspaceId/d/$docId': typeof WWorkspaceIdDDocIdRoute
 }
 export interface FileRoutesById {
@@ -69,8 +69,8 @@ export interface FileRoutesById {
   '/dashboard': typeof DashboardRoute
   '/login': typeof LoginRoute
   '/r/$docId': typeof RDocIdRoute
-  '/w/$workspaceId': typeof WWorkspaceIdRouteWithChildren
-  '/w/$workspaceId/d/$docId': typeof WWorkspaceIdDDocIdRoute
+  '/w/$workspaceId': typeof WWorkspaceIdRoute
+  '/w/$workspaceId_/d/$docId': typeof WWorkspaceIdDDocIdRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
@@ -96,7 +96,7 @@ export interface FileRouteTypes {
     | '/login'
     | '/r/$docId'
     | '/w/$workspaceId'
-    | '/w/$workspaceId/d/$docId'
+    | '/w/$workspaceId_/d/$docId'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
@@ -104,7 +104,8 @@ export interface RootRouteChildren {
   DashboardRoute: typeof DashboardRoute
   LoginRoute: typeof LoginRoute
   RDocIdRoute: typeof RDocIdRoute
-  WWorkspaceIdRoute: typeof WWorkspaceIdRouteWithChildren
+  WWorkspaceIdRoute: typeof WWorkspaceIdRoute
+  WWorkspaceIdDDocIdRoute: typeof WWorkspaceIdDDocIdRoute
 }
 
 declare module '@tanstack/react-router' {
@@ -144,34 +145,23 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof WWorkspaceIdRouteImport
       parentRoute: typeof rootRouteImport
     }
-    '/w/$workspaceId/d/$docId': {
-      id: '/w/$workspaceId/d/$docId'
-      path: '/d/$docId'
+    '/w/$workspaceId_/d/$docId': {
+      id: '/w/$workspaceId_/d/$docId'
+      path: '/w/$workspaceId/d/$docId'
       fullPath: '/w/$workspaceId/d/$docId'
       preLoaderRoute: typeof WWorkspaceIdDDocIdRouteImport
-      parentRoute: typeof WWorkspaceIdRoute
+      parentRoute: typeof rootRouteImport
     }
   }
 }
-
-interface WWorkspaceIdRouteChildren {
-  WWorkspaceIdDDocIdRoute: typeof WWorkspaceIdDDocIdRoute
-}
-
-const WWorkspaceIdRouteChildren: WWorkspaceIdRouteChildren = {
-  WWorkspaceIdDDocIdRoute: WWorkspaceIdDDocIdRoute,
-}
-
-const WWorkspaceIdRouteWithChildren = WWorkspaceIdRoute._addFileChildren(
-  WWorkspaceIdRouteChildren,
-)
 
 const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
   DashboardRoute: DashboardRoute,
   LoginRoute: LoginRoute,
   RDocIdRoute: RDocIdRoute,
-  WWorkspaceIdRoute: WWorkspaceIdRouteWithChildren,
+  WWorkspaceIdRoute: WWorkspaceIdRoute,
+  WWorkspaceIdDDocIdRoute: WWorkspaceIdDDocIdRoute,
 }
 export const routeTree = rootRouteImport
   ._addFileChildren(rootRouteChildren)
